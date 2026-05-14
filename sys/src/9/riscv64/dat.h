@@ -27,7 +27,6 @@ typedef struct FPsave	FPsave;
 typedef struct PFPU	PFPU;
 typedef struct ISAConf	ISAConf;
 typedef struct Label	Label;
-typedef struct Lock	Lock;
 typedef struct Memcache	Memcache;
 typedef struct MMMU	MMMU;
 typedef struct Mach	Mach;
@@ -60,16 +59,6 @@ typedef struct Mallocs Mallocs;
 //#define AOUT_MAGIC	(Y_MAGIC)
 // as a friend from BL once said: give it a fucking rest
 #define AOUT_MAGIC (0x8e17)
-
-struct Lock
-{
-	ulong	key;
-	u32int	sr;
-	uintptr	pc;
-	Proc*	p;
-	Mach*	m;
-	int	isilock;
-};
 
 struct Label
 {
