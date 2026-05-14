@@ -1,0 +1,55 @@
+# this is intended to be run from the root of wherever the repository is mounted or checked out:
+# . sys/lib/smallrootbind
+riscvsrc=`{pwd}
+
+# bind /amd64 to /n/amd64 to preserve write permission there,
+# but give up write permission on /amd64 by remounting it read-only.
+bind /$cputype /n/$cputype
+if (!(test -r /srv/$cputype))
+    srvfs -R $cputype /n/$cputype
+mount -b /srv/$cputype /$cputype
+
+# ensure we have the destination directories
+#cd /
+#. $riscvsrc/sys/lib/rootstub
+#cd $riscvsrc
+
+# for each source that is intentionally modified in this repository,
+# allow overwriting the lib or binary, and bind the source dir over the one in /sys/src
+for (i in ja jc jl) {
+    bind /n/$cputype/bin/$i /$cputype/bin/$i
+    if (!(test -d /sys/src/cmd/$i))
+        mkdir /sys/src/cmd/$i
+    bind -c $riscvsrc/sys/src/cmd/$i /sys/src/cmd/$i
+}
+for (i in libc libmach ) {
+    bind -ac $riscvsrc/sys/src/$i /sys/src/$i
+}
+bind -bc $riscvsrc/sys/src/libc/9syscall /sys/src/libc/9syscall
+for (i in libmp libsec) {
+    if (!(test -d /sys/src/$i/riscv64))
+        mkdir /sys/src/$i/riscv64
+    bind $riscvsrc/sys/src/$i/riscv64 /sys/src/$i/riscv64
+}
+
+# we need to rebuild libmach.a, so allow overwriting
+bind /n/$cputype/lib/libmach.a /$cputype/lib/libmach.a
+# we need to build a couple of tools, so allow overwriting and bind the source
+for (i in ar nm size ) {
+    bind /n/$cputype/bin/$i /$cputype/bin/$i
+    bind $riscvsrc/sys/src/cmd/$i.c /sys/src/cmd/$i.c
+}
+# we need to build the kernel, of course
+if (!(test -d /sys/src/9/riscv64))
+    mkdir /sys/src/9/riscv64
+bind -c $riscvsrc/sys/src/9/riscv64 /sys/src/9/riscv64
+
+# for each include file that is intentionally modified in this repository,
+# bind it over the one in /sys/src
+for (i in a.out.h mach.h) {
+    bind $riscvsrc/sys/include/$i /sys/include/$i
+}
+bind $riscvsrc/riscv64/include /riscv64/include
+bind $riscvsrc/sys/src/mkfile.proto /sys/src/mkfile.proto
+bind -ac $riscvsrc/sys/src/libthread /sys/src/libthread
+
