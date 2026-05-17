@@ -22,12 +22,12 @@ int	iscpu;
 void
 main(int argc, char *argv[])
 {
-	char *user;
+	char *user, *envservice;
 	int fd;
 
 	closefds();
 
-	service = "cpu";
+	service = nil;
 	manual = 0;
 	ARGBEGIN{
 	case 'c':
@@ -41,6 +41,17 @@ main(int argc, char *argv[])
 		break;
 	}ARGEND
 	cmd = *argv;
+
+	/*
+	 * Honor /env/service if the kernel/bootrc already set it (e.g. from
+	 * plan9.ini-style boot args).  Argv flags become a fallback for when
+	 * env is missing, preserving the historical -t/-c behaviour.
+	 */
+	envservice = readenv("#e/service");
+	if(strcmp(envservice, "*unknown*") != 0 && envservice[0] != '\0')
+		service = envservice;
+	else if(service == nil)
+		service = "cpu";
 
 	fd = procopen(getpid(), "ctl", OWRITE);
 	if(fd >= 0){
