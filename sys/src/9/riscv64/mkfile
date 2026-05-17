@@ -45,6 +45,7 @@ PORT=\
 OBJ=\
 	l.$O\
 	archrv.$O\
+	bootargs.$O\
 	strap.$O\
 	main.$O\
 	mmu.$O\

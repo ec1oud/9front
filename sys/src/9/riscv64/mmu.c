@@ -130,6 +130,15 @@ print("%p is %p\n", sv39, sv39[0]);
 		sv39[i] = ((0x40000000*i)>>2) | 0xcf;
 		print("sv39:%p is %p\n", &sv39[i], sv39[i]);
 	}
+	/*
+	 * qemu places the DTB near the top of guest RAM (e.g. 0x27fe00000
+	 * with -m 8G).  Map a few more 1G chunks so bootargsinit() can read
+	 * it via the identity-map vmap().
+	 */
+	for(i = 9; i < 11; i++){
+		sv39[i] = ((0x40000000*i)>>2) | 0xcf;
+		print("sv39:%p is %p\n", &sv39[i], sv39[i]);
+	}
 //while(! block);
 wsatp(((uintptr)sv39>>12)|(8ULL<<60));
 	if (0){

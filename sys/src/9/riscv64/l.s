@@ -50,6 +50,11 @@ DONECOPY:
 	JAL R1, 0(R1)
 RELOCATED:
 	MOV	$setSB(SB), R3
+	/* SBI passes hartid in a0 (R10) and DTB physical address in a1 (R11).
+	 * R10 was already clobbered during relocation; R11 survives.  
+     * Stash the DTB pointer before mmudisable<> can scratch it.
+	 */
+	MOV	R11, dtbphys(SB)
 	JAL	R1, mmudisable<>(SB)
 	MOV $MACHADDR(1), R2
 	MOV	$setSB(SB), R3

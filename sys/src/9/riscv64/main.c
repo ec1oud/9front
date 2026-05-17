@@ -202,12 +202,6 @@ cpuidprint(void)
 	iprint("cpu%d: 1000MHz QEMU\n", m->machno);
 }
 
-char *
-getconf(char * )
-{
-	return nil;
-}
-
 int i = 1;
 int once = 0;
 void
@@ -274,7 +268,7 @@ main(void)
 			;
 		print("Got %#x, tries %d\n", c, tries);
 	}
-//	bootargsinit();
+	bootargsinit();
 	meminit();
 	print("meminit done\n");
 	confinit();
@@ -428,7 +422,4 @@ dmaflush(int clean, void *p, ulong len)
 		cachedinvse((void*)s, e - s);
 #endif
 }
-void setconfenv(void)
-{
-	print("NOT DOING setconfenv\n");
-}
+/* setconfenv() now lives in bootargs.c */
