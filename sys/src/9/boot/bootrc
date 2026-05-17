@@ -179,6 +179,9 @@ if(test -x /bin/aux/kbdfs){
 	if(! ~ $#a 0)
 		a=/dev/eia^$a
 	aux/kbdfs -q -s cons $a
+	# termrc usually does this; we do it here so /dev/cons works
+	# even when init runs cpurc or skips termrc (e.g. service=con).
+	mount -qb /srv/cons /dev
 
 	if(! ~$#kbmap 0){
 		if(test -f /sys/lib/kbmap/$kbmap){

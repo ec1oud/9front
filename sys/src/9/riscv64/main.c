@@ -40,9 +40,7 @@ init0(void)
 			ksetenv("service", "cpu", 0);
 		else
 			ksetenv("service", "terminal", 0);
-		print("setconfenv\n");
 		setconfenv();
-		print("DONE ...\n");
 		poperror();
 	}
 	print("alarm kproc\n");
