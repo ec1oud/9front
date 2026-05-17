@@ -33,7 +33,7 @@ init0(void)
 	chandevinit();
 
 	if(!waserror()){
-		snprint(buf, sizeof(buf), "%s %s", "ARM64", conffile);
+		snprint(buf, sizeof(buf), "%s %s", "RISCV64", conffile);
 		ksetenv("terminal", buf, 0);
 		ksetenv("cputype", "riscv64", 0);
 		if(cpuserver)
