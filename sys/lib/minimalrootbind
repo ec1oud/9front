@@ -1,0 +1,48 @@
+# this is intended to be run from the root of wherever the repository is mounted or checked out:
+# . sys/lib/smallrootbind
+riscvsrc=`{pwd}
+
+# ensure we have the destination directories
+#cd /
+#. $riscvsrc/sys/lib/rootstub
+#cd $riscvsrc
+
+# bind -c: do file creation on the bound server (e.g. Linux git repo bound via drawterm)
+# bind -bc: two versions of one file may appear, but the "first" (newly-bound dir) "wins" in each open()
+# bind -ac: the old dir "wins"
+
+# for each cmd source that is intentionally modified in this repository,
+# bind the source dir over the one in /sys/src (replace, not union)
+for (i in ja jc jl) {
+    if (!(test -d /sys/src/cmd/$i))
+        mkdir /sys/src/cmd/$i
+    bind -c $riscvsrc/sys/src/cmd/$i /sys/src/cmd/$i
+}
+# for each source dir that might have different files in this repo vs. original, 
+# do a union mount and let the replacement files in this repo "win"
+for (i in libc libmach libthread) {
+    bind -bc $riscvsrc/sys/src/$i /sys/src/$i
+}
+# replace individual source files for modified tools
+for (i in ar nm size ) {
+    bind $riscvsrc/sys/src/cmd/$i.c /sys/src/cmd/$i.c
+}
+# bind-over replacements for more intentionally-modified files
+for (i in a.out.h mach.h) {
+    bind $riscvsrc/sys/include/$i /sys/include/$i
+}
+bind $riscvsrc/sys/src/mkfile.proto /sys/src/mkfile.proto
+bind $riscvsrc/riscv64/include /riscv64/include
+
+# riscv-specific lib specializations
+for (i in libmp libsec) {
+    if (!(test -d /sys/src/$i/riscv64))
+        mkdir /sys/src/$i/riscv64
+    bind -c $riscvsrc/sys/src/$i/riscv64 /sys/src/$i/riscv64
+}
+
+# we need to build the kernel, of course
+if (!(test -d /sys/src/9/riscv64))
+    mkdir /sys/src/9/riscv64
+bind -c $riscvsrc/sys/src/9/riscv64 /sys/src/9/riscv64
+
