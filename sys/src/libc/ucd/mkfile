@@ -30,13 +30,14 @@ UCD=\
 	/lib/ucd/WordBreakProperty.txt\
 	/lib/ucd/emoji-data.txt\
 
+# build mkrunetype for the host regardless of $objtype,
+# then use it to create the CPU-independent rune*data tables.
+hostO=`{sed -n 's/^O=//p' /$cputype/mkfile}
+
 $DATA:	$UCD
-	@{
-		eval `{grep '^[A-Z]' /$cputype/mkfile}
-		$CC $CFLAGS -o mkrunetype.$O mkrunetype.c
-		$LD $LDFLAGS -o $O.mkrunetype mkrunetype.$O
-		./$O.mkrunetype
-	}
+	$hostO^c $CFLAGS -o mkrunetype.$hostO mkrunetype.c
+	$hostO^l -o $hostO.mkrunetype mkrunetype.$hostO
+	./$hostO.mkrunetype
 
 nuke:V:
-	rm -f $DATA *.mkrunetype
+	rm -f $DATA mkrunetype.[$OS] [$OS].mkrunetype
