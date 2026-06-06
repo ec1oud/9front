@@ -2,7 +2,7 @@
  *	RV64A atomic operations
  *	LR/SC only work on cached regions
  *
- * see atom(2) for the properties they must implement.
+ * see atomic(2) for the properties they must implement.
  *
  * inserted fences before and after AMOs, to ensure immediate visibility of
  * protected data on other cpus.  setting AQ and RL produces sequential
@@ -42,7 +42,9 @@ spincas:
 	SLL	$32, R14
 	SRL	$32, R14	/* don't sign extend */
 	BNE	R12, R14, fail
-	FENCE_RW
+	/* no FENCE here: any load/store/fence between LR and SC
+	 * makes the loop "unconstrained" and forfeits the
+	 * forward-progress guarantee (unpriv ISA §13.3). */
 	SCW(13, ARG, 14)	/* R13 -> (R(ARG)) maybe, R14=0 if ok */
 	BNE	R14, spincas	/* R14 != 0 means store failed */
 ok:
@@ -65,7 +67,7 @@ TEXT casv(SB), 1, $-4
 spincasp:
 	LRD(ARG, 14)		/* (R(ARG)) -> R14 */
 	BNE	R12, R14, fail
-	FENCE_RW
+	/* no FENCE here: see comment in spincas */
 	SCD(13, ARG, 14)	/* R13 -> (R(ARG)) maybe, R14=0 if ok */
 	BNE	R14, spincasp	/* R14 != 0 means store failed */
 	JMP	ok
