@@ -79,6 +79,9 @@ rcpu, rimport, rexport, rconnect \- connection to CPU server
 .I keypattern
 ] [
 .B -p
+] [
+.B -t
+.I seconds
 ]
 .I host
 .I remotescript
@@ -192,7 +195,16 @@ to select a key to authenticate to the remote side (see
 .B -p
 Protect the connection against connection resets by establishing
 .IR aan (8)
-tunnel.
+tunnel. If the remote host has
+.B aanport
+set (see
+.IR ndb (6))
+the remote listeners will be restricted to the given port range.
+.TP
+.B -t \fIseconds
+Specifies the maximum
+.IR aan (8)
+idle timeout in seconds (default is one day).
 .SH FILES
 .B /rc/bin/service/tcp17019
 .SH SOURCE

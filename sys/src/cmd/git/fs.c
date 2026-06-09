@@ -15,7 +15,6 @@ enum {
 		Qmsg,
 		Qparent,
 		Qtree,
-		Qcdata,
 		Qhash,
 		Qauthor,
 		Qcommitter,
@@ -79,6 +78,7 @@ char *qroot[] = {
 #define Eimpl	"not implemented"
 #define Egreg	"wat"
 #define Ebadobj	"invalid object"
+#define Ename	"invalid path element"
 
 char	gitdir[512];
 char	*username;
@@ -284,7 +284,7 @@ gcommitgen(int i, Dir *d, void *p)
 
 	switch(i){
 	case 0:
-		d->mode = 0755 | DMDIR;
+		d->mode = DMDIR | gitdirmode;
 		d->name = estrdup9p("tree");
 		d->qid.type = QTDIR;
 		d->qid.path = qpath(c, i, o->id, Qtree);
@@ -495,7 +495,7 @@ objwalk1(Qid *q, Object *o, Crumb *p, Crumb *c, char *name, vlong qdir, Gitaux *
 			q->type = (w->type == GTree) ? QTDIR : 0;
 			q->path = qpath(p, i, w->id, qdir);
 			c->mode = m;
-			c->mode |= (w->type == GTree) ? DMDIR|0755 : 0644;
+			c->mode |= (w->type == GTree) ? (DMDIR|0755) : 0644;
 			c->obj = w;
 			break;
 		}
@@ -521,7 +521,7 @@ objwalk1(Qid *q, Object *o, Crumb *p, Crumb *c, char *name, vlong qdir, Gitaux *
 			q->type = QTDIR;
 			q->path = qpath(p, 4, o->id, Qtree);
 			unref(c->obj);
-			c->mode = DMDIR | 0755;
+			c->mode = DMDIR | gitdirmode;
 			c->obj = readobject(o->commit->tree);
 			if(c->obj == nil)
 				sysfatal("could not read object %H: %r", o->commit->tree);
@@ -662,11 +662,13 @@ gitwalk1(Fid *fid, char *name, Qid *q)
 		e = objwalk1(q, o->obj, o, c, name, Qcommit, aux);
 		break;
 	case Qtree:
-		e = objwalk1(q, o->obj, o, c, name, Qtree, aux);
+		if(strcmp(name, ".git") == 0)
+			e = Ename;
+		else
+			e = objwalk1(q, o->obj, o, c, name, Qtree, aux);
 		break;
 	case Qparent:
 	case Qmsg:
-	case Qcdata:
 	case Qhash:
 	case Qauthor:
 	case Qcommitter:
@@ -812,7 +814,6 @@ gitread(Req *r)
 		break;
 	case Qcommit:
 	case Qtree:
-	case Qcdata:
 		objread(r, aux);
 		break;
 	default:
@@ -892,9 +893,14 @@ usage(void)
 void
 main(int argc, char **argv)
 {
+	char repo[512];
+	int nelt;
 	Dir *d;
 
-	gitinit();
+	gitinit(repo, sizeof(repo), &nelt);
+	if(chdir(repo) == -1)
+		sysfatal("chdir: %r");
+
 	ARGBEGIN{
 	case 'd':
 		chatty9p++;

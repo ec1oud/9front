@@ -129,19 +129,66 @@ kickpager(void)
 	wakeup(&swapalloc.r);
 }
 
+static void
+killbig(void)
+{
+	int i;
+	Segment *s;
+	ulong l, max;
+	Proc *p, *kp;
+
+	max = 0;
+	kp = nil;
+	for(i = 0; (p = proctab(i)) != nil; i++) {
+		if(p->state <= New || p->kp || p->parentpid == 0)
+			continue;
+		if(p->procctl == Proc_exitbig)
+			return;	/* try later when done exiting */
+		if((p->noswap || (p->procmode & 0222) == 0) && strcmp(eve, p->user) == 0)
+			continue;
+		l = procpagecount(p);
+		if(l > max){
+			kp = p;
+			max = l;
+		}
+	}
+	if(kp == nil)
+		return;
+	if(!canqlock(&kp->debug))
+		return;
+	if(!canqlock(&kp->seglock)){
+		qunlock(&kp->debug);
+		return;
+	}
+	if(!needpages(nil)){
+		qunlock(&kp->seglock);
+		qunlock(&kp->debug);
+		return;
+	}
+	s = kp->seg[BSEG];
+	killproc(kp, Proc_exitbig);
+	qunlock(&kp->debug);
+	if(s != nil && s->ref > 1){
+		for(i = 0; (p = proctab(i)) != nil; i++) {
+			if(p == kp || p->seg[BSEG] != s || !canqlock(&p->debug))
+				continue;
+			killproc(p, Proc_exitbig);
+			qunlock(&p->debug);
+		}
+	}
+	qunlock(&kp->seglock);
+}
+
 static int
 reclaim(void)
 {
-	enum {
-		Target = 4*MB/BY2PG,
-	};
 	ulong np;
 
 	for(;;){
 		np = pagereclaim(fscache);
-		if(np < Target)
-			np += imagereclaim(Target-np);
-		if(np < Target)
+		if(np < swapalloc.headroom)
+			np += imagereclaim(swapalloc.headroom-np);
+		if(np < swapalloc.headroom)
 			np += pagereclaim(swapimage);
 		if(!needpages(nil))
 			return 1;	/* have pages, done */
@@ -166,8 +213,6 @@ pager(void*)
 		up->psstate = "Reclaim";
 		if(reclaim()){
 			up->psstate = "Idle";
-			wakeup(&palloc.pwait[0]);
-			wakeup(&palloc.pwait[1]);
 			sleep(&swapalloc.r, needpages, nil);
 			continue;
 		}
@@ -359,12 +404,6 @@ executeio(void)
 	}
 	ioptr = j;
 	if(j) print("executeio (%lud/%lud): %s\n", j, i, up->errstr);
-}
-
-int
-needpages(void*)
-{
-	return palloc.freecount < swapalloc.headroom;
 }
 
 static void

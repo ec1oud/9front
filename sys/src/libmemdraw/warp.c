@@ -6,17 +6,17 @@
 /* perfect approximation to NTSC = .299r+.587g+.114b when 0 ≤ r,g,b < 256 */
 #define RGB2K(r,g,b)	((156763*(r)+307758*(g)+59769*(b))>>19)
 
-/* 25.7 fixed-point number operations */
+/* 19.13 fixed-point number operations */
 
-#define FMASK		((1<<7) - 1)
-#define flt2fix(n)	((long)((n)*(1<<7) + ((n) < 0? -0.5: 0.5)))
-#define fix2flt(n)	((n)/128.0)
-#define int2fix(n)	((vlong)(n)<<7)
-#define fix2int(n)	((n)>>7)
-#define fixmul(a,b)	((vlong)(a)*(vlong)(b) >> 7)
-#define fixdiv(a,b)	(((vlong)(a) << 7)/(vlong)(b))
+#define FMASK		((1<<13) - 1)
+#define flt2fix(n)	((long)((n)*(1<<13) + ((n) < 0? -0.5: 0.5)))
+#define fix2flt(n)	((n)/8192.0)
+#define int2fix(n)	((vlong)(n)<<13)
+#define fix2int(n)	((n)>>13)
+#define fixmul(a,b)	((vlong)(a)*(vlong)(b) >> 13)
+#define fixdiv(a,b)	(((vlong)(a) << 13)/(vlong)(b))
 #define fixfrac(n)	((n)&FMASK)
-#define lerp(a,b,t)	((a) + ((((b) - (a))*(t))>>7))
+#define lerp(a,b,t)	((a) + ((((b) - (a))*(t))>>13))
 
 #define clamp(a,b,c)	((a)<(b)?(b):((a)>(c)?(c):(a)))
 
@@ -69,11 +69,11 @@ initblitter(Blitter *b, Memimage *i)
 }
 
 static Point
-xform(Point p, Warp m)
+xform(Point p, Warp *m)
 {
 	return (Point){
-		fixmul(p.x, m[0][0]) + fixmul(p.y, m[0][1]) + m[0][2],
-		fixmul(p.x, m[1][0]) + fixmul(p.y, m[1][1]) + m[1][2]
+		fixmul(p.x, m->m[0][0]) + fixmul(p.y, m->m[0][1]) + m->m[0][2],
+		fixmul(p.x, m->m[1][0]) + fixmul(p.y, m->m[1][1]) + m->m[1][2]
 	};
 }
 
@@ -84,9 +84,9 @@ getpixel_k1(Sampler *s, Point pt)
 	ulong off, npack, v;
 
 	p = s->a + pt.y*s->bpl + (pt.x >> 3);
-	npack = 8;
-	off = pt.x % npack;
-	v = p[0] >> (npack-1-off) & 0x1;
+	npack = 8-1;
+	off = pt.x & npack;
+	v = p[0] >> (npack-off) & 0x1;
 	return v*0xFFFFFF00 | 0xFF;
 }
 
@@ -97,9 +97,9 @@ getpixel_k2(Sampler *s, Point pt)
 	ulong off, npack;
 
 	p = s->a + pt.y*s->bpl + (pt.x*2 >> 3);
-	npack = 8/2;
-	off = pt.x % npack;
-	v = p[0] >> 2*(npack-1-off) & 0x3;
+	npack = 8/2 - 1;
+	off = pt.x & npack;
+	v = p[0] >> 2*(npack-off) & 0x3;
 	return v*0x55555500 | 0xFF;
 }
 
@@ -110,9 +110,9 @@ getpixel_k4(Sampler *s, Point pt)
 	ulong off, npack;
 
 	p = s->a + pt.y*s->bpl + (pt.x*4 >> 3);
-	npack = 8/4;
-	off = pt.x % npack;
-	v = p[0] >> 4*(npack-1-off) & 0xF;
+	npack = 8/4 - 1;
+	off = pt.x & npack;
+	v = p[0] >> 4*(npack-off) & 0xF;
 	return v*0x11111100 | 0xFF;
 }
 
@@ -202,6 +202,22 @@ getpixel_x8r8g8b8(Sampler *s, Point pt)
 
 	p = s->a + pt.y*s->bpl + pt.x*4;
 	return (p[2]<<24)|(p[1]<<16)|(p[0]<<8)|0xFF;
+}
+
+static ulong
+getpixel_x1b5g5r5(Sampler *s, Point pt)
+{
+	uchar *p, r, g, b;
+	ulong val;
+
+	p = s->a + pt.y*s->bpl + pt.x*2;
+	val = p[0]|(p[1]<<8);
+	r = val&0x1F; r = (r<<3)|(r>>2);
+	val >>= 5;
+	g = val&0x1F; g = (g<<3)|(g>>2);
+	val >>= 5;
+	b = val&0x1F; b = (b<<3)|(b>>2);
+	return (r<<24)|(g<<16)|(b<<8)|0xFF;
 }
 
 static ulong
@@ -330,9 +346,9 @@ putpixel_k1(Blitter *blt, Point dp, ulong rgba)
 	m >>= 8-1;
 
 	mask = 0x1;
-	npack = 8;
-	off = dp.x%npack;
-	sh = npack-1-off;
+	npack = 8-1;
+	off = dp.x&npack;
+	sh = npack-off;
 	mask <<= sh;
 	m <<= sh;
 	p[0] = (p[0] ^ m) & mask ^ p[0];
@@ -353,9 +369,9 @@ putpixel_k2(Blitter *blt, Point dp, ulong rgba)
 	m >>= 8-2;
 
 	mask = 0x3;
-	npack = 8/2;
-	off = dp.x%npack;
-	sh = 2*(npack-1-off);
+	npack = 8/2 - 1;
+	off = dp.x&npack;
+	sh = 2*(npack-off);
 	mask <<= sh;
 	m <<= sh;
 	p[0] = (p[0] ^ m) & mask ^ p[0];
@@ -376,9 +392,9 @@ putpixel_k4(Blitter *blt, Point dp, ulong rgba)
 	m >>= 8-4;
 
 	mask = 0xF;
-	npack = 8/4;
-	off = dp.x%npack;
-	sh = 4*(npack-1-off);
+	npack = 8/4 - 1;
+	off = dp.x&npack;
+	sh = 4*(npack-off);
 	mask <<= sh;
 	m <<= sh;
 	p[0] = (p[0] ^ m) & mask ^ p[0];
@@ -491,6 +507,23 @@ putpixel_x8r8g8b8(Blitter *blt, Point dp, ulong rgba)
 }
 
 static void
+putpixel_x1b5g5r5(Blitter *blt, Point dp, ulong rgba)
+{
+	uchar *p, r, g, b;
+	ushort v;
+
+	r = rgba>>24;
+	g = rgba>>16;
+	b = rgba>>8;
+	v = b>>(8-5);
+	v = (v<<5)|(g>>(8-5));
+	v = (v<<5)|(r>>(8-5));
+	p = blt->a + dp.y*blt->bpl + dp.x*2;
+	p[0] = v;
+	p[1] = v>>8;
+}
+
+static void
 putpixel_b8g8r8(Blitter *blt, Point dp, ulong rgba)
 {
 	uchar *p;
@@ -599,6 +632,7 @@ getsampfn(ulong chan)
 	case RGBA32: return getpixel_r8g8b8a8;
 	case ARGB32: return getpixel_a8r8g8b8;
 	case XRGB32: return getpixel_x8r8g8b8;
+	case BGR15: return getpixel_x1b5g5r5;
 	case BGR24: return getpixel_b8g8r8;
 	case ABGR32: return getpixel_a8b8g8r8;
 	case XBGR32: return getpixel_x8b8g8r8;
@@ -621,6 +655,7 @@ getblitfn(ulong chan)
 	case RGBA32: return putpixel_r8g8b8a8;
 	case ARGB32: return putpixel_a8r8g8b8;
 	case XRGB32: return putpixel_x8r8g8b8;
+	case BGR15: return putpixel_x1b5g5r5;
 	case BGR24: return putpixel_b8g8r8;
 	case ABGR32: return putpixel_a8b8g8r8;
 	case XBGR32: return putpixel_x8b8g8r8;
@@ -631,8 +666,8 @@ getblitfn(ulong chan)
 static ulong
 sample1(Sampler *s, Point p)
 {
-	if(p.x >= s->r.min.x && p.x < s->r.max.x
-	&& p.y >= s->r.min.y && p.y < s->r.max.y)
+	if(p.y >= s->r.min.y && p.y < s->r.max.y
+	&& p.x >= s->r.min.x && p.x < s->r.max.x)
 		return s->fn(s, p);
 	else if(s->i->flags & Frepl){
 		p = drawrepl(s->r, p);
@@ -705,18 +740,68 @@ correlate(Sampler *s, Point p)
 
 		Σr += r; Σg += g; Σb += b; Σa += a;
 	}
-	r = clamp(fix2int(Σr), 0, 0xFF);
-	g = clamp(fix2int(Σg), 0, 0xFF);
-	b = clamp(fix2int(Σb), 0, 0xFF);
-	a = clamp(fix2int(Σa), 0, 0xFF);
+	r = fix2int(Σr); r = clamp(r, 0, 0xFF);
+	g = fix2int(Σg); g = clamp(g, 0, 0xFF);
+	b = fix2int(Σb); b = clamp(b, 0, 0xFF);
+	a = fix2int(Σa); a = clamp(a, 0, 0xFF);
 
 	return r<<24|g<<16|b<<8|a;
 }
 
-int
-memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp m, int smooth)
+/*
+ * integer upscaling optimization
+ */
+static void
+intupscalewarp(Blitter *blit, Rectangle r, Sampler *samp, Point sp0, Warp *m)
 {
-	ulong (*sample)(Sampler*, Point) = sample1;
+	Point sp, dp, p2, scale;
+	ulong c, bpl;
+	int p2x₀, i;
+	uchar *p;
+
+	bpl = Dx(r)*blit->i->depth >> 3;
+	scale = (Point){
+		fixdiv(int2fix(1), m->m[0][0]),
+		fixdiv(int2fix(1), m->m[1][1])
+	};
+	scale.x = fix2int(scale.x + (1<<12));
+	scale.y = fix2int(scale.y + (1<<12));
+
+	p2 = xform((Point){
+		int2fix(r.min.x - blit->i->r.min.x) + (1<<12),
+		int2fix(r.min.y - blit->i->r.min.y) + (1<<12)
+	}, m);
+	p2x₀ = p2.x;
+
+	for(dp.y = r.min.y; dp.y < r.max.y; ){
+		sp.y = sp0.y + fix2int(p2.y);
+	for(dp.x = r.min.x; dp.x < r.max.x; ){
+		sp.x = sp0.x + fix2int(p2.x);
+
+		c = sample1(samp, sp);
+		for(i = 0; i < scale.x && dp.x < r.max.x; i++){
+			blit->fn(blit, dp, c);
+			dp.x++;
+			p2.x += m->m[0][0];
+		}
+	}
+		p = blit->a + dp.y*blit->bpl + (r.min.x*blit->i->depth >> 3);
+		dp.y++;
+		p2.y += m->m[1][1];
+		for(i = 1; i < scale.y && dp.y < r.max.y; i++){
+			memmove(p+blit->bpl, p, bpl);
+			p += blit->bpl;
+			dp.y++;
+			p2.y += m->m[1][1];
+		}
+		p2.x = p2x₀;
+	}
+}
+
+void
+memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp *m, int smooth)
+{
+	ulong (*sample)(Sampler*, Point);
 	Sampler samp;
 	Blitter blit;
 	Point sp, dp, p2, p2₀;
@@ -726,17 +811,21 @@ memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp m, int smoo
 	dr = d->clipr;
 	rectclip(&dr, d->r);
 	if(rectclip(&r, dr) == 0)
-		return 0;
+		return;
 
 	samp.r = s->clipr;
 	if(rectclip(&samp.r, s->r) == 0)
-		return 0;
+		return;
 
-	if(smooth)
-		sample = bilinear;
+	sample = smooth? bilinear: sample1;
 
 	initsampler(&samp, s);
 	initblitter(&blit, d);
+
+	if(!smooth && (m->flags & WFintupscale) != 0){
+		intupscalewarp(&blit, r, &samp, sp0, m);
+		return;
+	}
 
 	/*
 	 * incremental affine warping technique from:
@@ -744,7 +833,10 @@ memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp m, int smoo
 	 * 	Lee, S., Lee, GG., Jang, E.S., Kim, WY,
 	 * 	Intelligent Computing.  ICIC 2006. LNCS, vol 4113.
 	 */
-	p2 = p2₀ = xform((Point){int2fix(r.min.x - dr.min.x) + (1<<6), int2fix(r.min.y - dr.min.y) + (1<<6)}, m);
+	p2 = p2₀ = xform((Point){
+		int2fix(r.min.x - d->r.min.x) + (1<<12),
+		int2fix(r.min.y - d->r.min.y) + (1<<12)
+	}, m);
 	for(dp.y = r.min.y; dp.y < r.max.y; dp.y++){
 	for(dp.x = r.min.x; dp.x < r.max.x; dp.x++){
 		samp.Δx = fixfrac(p2.x);
@@ -756,13 +848,12 @@ memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp m, int smoo
 		c = sample(&samp, sp);
 		blit.fn(&blit, dp, c);
 
-		p2.x += m[0][0];
-		p2.y += m[1][0];
+		p2.x += m->m[0][0];
+		p2.y += m->m[1][0];
 	}
-		p2.x = p2₀.x += m[0][1];
-		p2.y = p2₀.y += m[1][1];
+		p2.x = p2₀.x += m->m[0][1];
+		p2.y = p2₀.y += m->m[1][1];
 	}
-	return 0;
 }
 
 static double

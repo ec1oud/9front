@@ -76,15 +76,6 @@ pageinit(void)
 	print("%lldM swap\n", v/(1024*1024));
 }
 
-static void
-pagechaindone(void)
-{
-	if(palloc.pwait[0].p != nil && wakeup(&palloc.pwait[0]) != nil)
-		return;
-	if(palloc.pwait[1].p != nil)
-		wakeup(&palloc.pwait[1]);
-}
-
 void
 freepages(Page *head, Page *tail, ulong np)
 {
@@ -102,8 +93,14 @@ freepages(Page *head, Page *tail, ulong np)
 	lock(&palloc);
 	tail->next = palloc.head;
 	palloc.head = head;
-	palloc.freecount += np;
-	pagechaindone();
+	if(palloc.freecount <= swapalloc.highwater){
+		palloc.freecount += np;
+		if(palloc.freecount > swapalloc.highwater)
+			wakeup(&palloc.pwait[1]);
+		wakeup(&palloc.pwait[0]);
+	} else {
+		palloc.freecount += np;
+	}
 	unlock(&palloc);
 }
 
@@ -162,8 +159,14 @@ Done:
 	return np;
 }
 
+int
+needpages(void*)
+{
+	return palloc.freecount < swapalloc.headroom;
+}
+
 static int
-ispages(void*)
+havepages(void*)
 {
 	return palloc.freecount > swapalloc.highwater || up->noswap && palloc.freecount > 0;
 }
@@ -175,7 +178,7 @@ newpage(uintptr va, QLock *locked)
 	int color;
 
 	lock(&palloc);
-	while(!ispages(nil)){
+	while(!havepages(nil)){
 		unlock(&palloc);
 		if(locked)
 			qunlock(locked);
@@ -184,10 +187,9 @@ newpage(uintptr va, QLock *locked)
 			Rendezq *q;
 
 			q = &palloc.pwait[!up->noswap];
-			eqlock(q);	
+			eqlock(q);
 			if(!waserror()){
-				kickpager();
-				sleep(q, ispages, nil);
+				sleep(q, havepages, nil);
 				poperror();
 			}
 			qunlock(q);
@@ -222,8 +224,12 @@ newpage(uintptr va, QLock *locked)
 
 	*l = p->next;
 	p->next = nil;
-	palloc.freecount--;
-	unlock(&palloc);
+	if(--palloc.freecount <= swapalloc.highwater){
+		unlock(&palloc);
+		kickpager();
+	} else {
+		unlock(&palloc);
+	}
 
 	p->ref = 1;
 	p->va = va;

@@ -19,6 +19,7 @@ void		cachepage(Page*, Image*);
 void		callwithureg(void(*)(Ureg*));
 char*		chanpath(Chan*);
 int		canlock(Lock*);
+int		canmount(Pgrp*);
 int		canpage(Proc*);
 int		canqlock(QLock*);
 int		canrlock(RWLock*);
@@ -71,6 +72,8 @@ void		devdir(Chan*, Qid, char*, vlong, char*, long, Dir*);
 long		devdirread(Chan*, char*, long, Dirtab*, int, Devgen*);
 Devgen		devgen;
 void		devinit(void);
+void		devmask(Pgrp*, int, char*);
+int		devmasked(Pgrp*, int);
 int		devno(int);
 Chan*		devopen(Chan*, int, Dirtab*, int, Devgen*);
 void		devpermcheck(char*, ulong, int);
@@ -167,7 +170,6 @@ Physseg*	findphysseg(char*);
 int		kenter(Ureg*);
 void		kexit(Ureg*);
 void		kickpager(void);
-void		killbig(void);
 void		killproc(Proc*,int);
 void		kproc(char*, void(*)(void*), void*);
 void		kprocchild(Proc*, void (*)(void));
@@ -244,7 +246,9 @@ Cmdbuf*		parsecmd(char *a, int n);
 void		pathclose(Path*);
 ulong		perfticks(void);
 _Noreturn void	pexit(char*, int);
-void		pgrpcpy(Pgrp*, Pgrp*);
+void		pgrpcpy(Pgrp*, Pgrp*, int);
+void		pgrpinsert(Pgrp*, Mount *);
+void		pgrpremove(Pgrp*, Mount *);
 ulong		pidalloc(Proc*);
 #define		waserror()		setlabel(&up->errlab[up->nerrlab++])
 #define		poperror()		up->nerrlab--
@@ -360,7 +364,6 @@ int		splhi(void);
 int		spllo(void);
 void		splx(int);
 void		splxpc(int);
-char*		srvname(Chan*);
 void		srvrenameuser(char*, char*);
 void		shrrenameuser(char*, char*);
 int		swapcount(uintptr);
@@ -432,9 +435,6 @@ uint		nhgetl(void*);
 ushort		nhgets(void*);
 ulong		µs(void);
 long		lcycles(void);
-void		devmask(Pgrp*,int,char*);
-int		devallowed(Pgrp*, int);
-int		canmount(Pgrp*);
 
 #pragma varargck argpos iprint	1
 #pragma	varargck argpos	panic	1

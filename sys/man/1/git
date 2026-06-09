@@ -30,7 +30,7 @@ git/pull, git/rm, git/serve, git/hist \- manage git repositories
 .PP
 .B git/commit
 [
-.B -re
+.B -rep
 ]
 [
 .B -m
@@ -206,8 +206,7 @@ repositories hosted in git.
 .SH CONCEPTS
 Git stores snapshots of the working directory.
 Files can either be in a tracked or untracked state.
-Each commit takes the current version of all tracked files and
-adds them to a new commit.
+Untracked files will be ignored.
 .PP
 This history is stored in the
 .B .git
@@ -352,6 +351,10 @@ can be used in conjunction with
 .B -m
 or
 .BR -e .
+The
+.B -p
+option commits only portions of each file.
+Individual hunks are selected interactively.
 .PP
 .I Git/branch
 is used to list or switch branches.

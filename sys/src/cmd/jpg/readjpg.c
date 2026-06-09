@@ -24,10 +24,10 @@ enum {
 	APPn	=0xE0,	/* Reserved for application segments */
 	JPGn	=0xF0,	/* Reserved for JPEG extensions */
 	COM	=0xFE,	/* Comment */
-
-	CLAMPOFF	= 300,
-	NCLAMP		= CLAMPOFF+700
 };
+
+/* clamp x to 0-255 */
+#define CLAMP(x) ((x) < 0 ? 0 : ((x) > 255 ? 255 : (x)))
 
 typedef struct Framecomp Framecomp;
 typedef struct Header Header;
@@ -96,8 +96,6 @@ struct Header
 	int		Vmax;
 };
 
-static	uchar	clamp[NCLAMP];
-
 static	Rawimage	*readslave(Header*, int);
 static	int			readsegment(Header*, int*);
 static	void			quanttables(Header*, uchar*, int);
@@ -134,23 +132,6 @@ static	int zig[64] = {
 	53, 60, 61, 54, 47, 55, 62, 63 /* 56-63 */
 };
 
-static
-void
-jpginit(void)
-{
-	int k;
-	static int inited;
-
-	if(inited)
-		return;
-	inited = 1;
-	for(k=0; k<CLAMPOFF; k++)
-		clamp[k] = 0;
-	for(; k<CLAMPOFF+256; k++)
-		clamp[k] = k-CLAMPOFF;
-	for(; k<NCLAMP; k++)
-		clamp[k] = 255;
-}
 
 static
 void*
@@ -245,7 +226,6 @@ Breadjpg(Biobuf *b, int colorspace)
 		werrstr("ReadJPG: unknown color space");
 		return nil;
 	}
-	jpginit();
 	h = malloc(sizeof(Header));
 	array = malloc(2*sizeof(Rawimage*));
 	if(h==nil || array==nil){
@@ -320,9 +300,15 @@ readslave(Header *header, int colorspace)
 
 		case SOF:
 		case SOF2:
+			if(header->mode != 0)
+				jpgerror(header, "ReadJPG: duplicate SOF header");
 			header->Y = int2(b, 1);
 			header->X = int2(b, 3);
 			header->Nf = b[5];
+			if(header->X == 0 || header->Y == 0)
+				jpgerror(header, "ReadJPG: image must have nonzero dimensions");
+			if(header->Nf != 1 && header->Nf != 3)
+				jpgerror(header, "ReadJPG: image must have 1 or 3 components");
 			for(i=0; i<header->Nf; i++){
 				header->comp[i].C = b[6+3*i+0];
 				nibbles(b[6+3*i+1], &H, &V);
@@ -334,6 +320,8 @@ readslave(Header *header, int colorspace)
 				header->comp[i].H = H;
 				header->comp[i].V = V;
 				header->comp[i].Tq = b[6+3*i+2];
+				if(header->comp[i].Tq > 3)
+					jpgerror(header, "ReadJPG: invalid quantization table index");
 			}
 			header->mode = m;
 			header->sf = b;
@@ -457,7 +445,7 @@ readsegment(Header *h, int *markerp)
 		return 0;
 	}
 	if(Bread(h->fd, tmp, 2) != 2)
-    Readerr:
+Readerr:
 		jpgerror(h, readerr);
 	n = int2(tmp, 0);
 	if(n < 2)
@@ -478,12 +466,14 @@ readsegment(Header *h, int *markerp)
 
 static
 int
-huffmantable(Header *h, uchar *b)
+huffmantable(Header *h, uchar *b, int nb)
 {
 	Huffman *t;
 	int Tc, th, n, nsize, i, j, k, v, cnt, code, si, sr;
 	int *maxcode;
 
+	if(nb < 17)
+		jpgerror(h, "ReadJPG: invalid huffman table: nb(%d) < 17", nb);
 	nibbles(b[0], &Tc, &th);
 	if(Tc > 1)
 		jpgerror(h, "ReadJPG: unknown Huffman table class %d", Tc);
@@ -500,6 +490,8 @@ huffmantable(Header *h, uchar *b)
 		nsize += b[i];
 	if(nsize == 0)
 		return 0;
+	if(nb < 17+nsize)
+		jpgerror(h, "ReadJPG: invalid huffman table, %d < %d", nb, 17+nsize);
 	t->size = jpgmalloc(h, (nsize+1)*sizeof(int), 1);
 	k = 0;
 	for(i=1; i<=16; i++){
@@ -511,8 +503,11 @@ huffmantable(Header *h, uchar *b)
 
 	/* initialize HUFFVAL */
 	t->val = jpgmalloc(h, nsize*sizeof(int), 1);
-	for(i=0; i<nsize; i++)
+	for(i=0; i<nsize; i++){
 		t->val[i] = b[17+i];
+		if(Tc == 0 && t->val[i] > 15 || (t->val[i] & 0xF) > 14)
+			jpgerror(h, "ReadJPG: corrupt Huffman table");
+	}
 
 	/* flow chart C-3 */
 	t->code = jpgmalloc(h, (nsize+1)*sizeof(int), 1);
@@ -574,7 +569,7 @@ outF25:
 		t->shift[v] = 8-cnt;
 		t->value[v] = t->val[t->valptr[i]+(code-t->mincode[i])];
 
-    continueBytes:
+continueBytes:
 		v++;
 	}
 
@@ -588,7 +583,7 @@ huffmantables(Header *h, uchar *b, int n)
 	int l, mt;
 
 	for(l=0; l<n; l+=17+mt)
-		mt = huffmantable(h, &b[l]);
+		mt = huffmantable(h, &b[l], n-l);
 }
 
 static
@@ -676,6 +671,8 @@ baselinescan(Header *h, int colorspace)
 		/* so if both have 3 we know scan is Y Cb Cr and there's no need to */
 		/* reorder */
 		nibbles(ss[2+2*comp], &Td[comp], &Ta[comp]);
+		if(Td[comp] > 3 || Ta[comp] > 3)
+			jpgerror(h, "ReadJPG: invalid Huffman table index");
 		H[comp] = h->comp[comp].H;
 		V[comp] = h->comp[comp].V;
 		nblock = H[comp]*V[comp];
@@ -849,7 +846,7 @@ progressiveinit(Header *h, int colorspace)
 	ss = h->ss;
 	Ns = ss[0];
 	Nf = h->Nf;
-	if(Ns!=3 && Ns!=1)
+	if(Ns!=3 && Ns!=1 || Nf != 3 && Nf != 1)
 		jpgerror(h, "ReadJPG: image must have 1 or 3 components");
 
 	image = jpgmalloc(h, sizeof(Rawimage), 1);
@@ -881,6 +878,8 @@ progressiveinit(Header *h, int colorspace)
 		if(h->comp[comp].V > h->Vmax)
 			h->Vmax = h->comp[comp].V;
 	}
+	if(h->Hmax == 0 || h->Vmax == 0)
+		jpgerror(h, "ReadJPG: invalid sampling factors");
 	h->nacross = ((h->X+(8*h->Hmax-1))/(8*h->Hmax));
 	h->ndown = ((h->Y+(8*h->Vmax-1))/(8*h->Vmax));
 	nmcu = h->nacross*h->ndown;
@@ -899,16 +898,15 @@ static
 void
 progressivedc(Header *h, int comp, int Ah, int Al)
 {
-	int Ns, z, ri, mcu,  nmcu;
+	int Ns, z, ri, mcu, nmcu;
 	int block, t, diff, qt, *dc, bn;
+	int x, y, H, V, nhor, nver, q;
 	Huffman *dcht;
 	uchar *ss;
-	int i, Td[3], DC[3], blockno[3];
+	int i, j, Td[4], DC[4], scancomp[4], blockno[4];
 
 	ss= h->ss;
 	Ns = ss[0];
-	if(Ns!=1 && Ns!=h->Nf)
-		jpgerror(h, "ReadJPG: can't handle progressive with Ns!=1 and Nf!=Ns in DC scan");
 
 	/* initialize data structures */
 	h->cnt = 0;
@@ -916,47 +914,87 @@ progressivedc(Header *h, int comp, int Ah, int Al)
 	h->peek = -1;
 
 	for(i=0; i<Ns; i++){
-		/*
-		 * JPEG requires scan components to be in same order as in frame,
-		 * so if both have 3 we know scan is Y Cb Cr and there's no need to
-		 * reorder
-		 */
 		nibbles(ss[2+2*i], &Td[i], &z);	/* z is ignored */
+		if(Td[i] > 3)
+			jpgerror(h, "ReadJPG: invalid Huffman table index");
 		DC[i] = 0;
+		for(j=0; j<h->Nf; j++)
+			if(h->comp[j].C == ss[1+2*i]){
+				scancomp[i] = j;
+				break;
+			}
+		if(j == h->Nf)
+			jpgerror(h, "ReadJPG: bad component selector in scan");
 	}
 
 	ri = h->ri;
 
-	nmcu = h->nacross*h->ndown;
-	memset(blockno, 0, sizeof blockno);
-	for(mcu=0; mcu<nmcu; ){
-		for(i=0; i<Ns; i++){
-			if(Ns != 1) comp = i;
-
-			dcht = &h->dcht[Td[i]];
-			qt = h->qt[h->comp[comp].Tq][0];
-			dc = h->dccoeff[comp];
-			bn = blockno[i];
-
-			for(block=0; block<h->nblock[comp]; block++){
+	if(Ns == 1){
+		/* ITU-T.81 A.2.2: scan in raster order if Ns = 1*/
+		comp = scancomp[0];
+		H = h->comp[comp].H;
+		V = h->comp[comp].V;
+		q = 8*h->Hmax/H;
+		nhor = (h->X+q-1)/q;
+		q = 8*h->Vmax/V;
+		nver = (h->Y+q-1)/q;
+		dcht = &h->dcht[Td[0]];
+		qt = h->qt[h->comp[comp].Tq][0];
+		dc = h->dccoeff[comp];
+		mcu = 0;
+		for(y=0; y<nver; y++){
+			for(x=0; x<nhor; x++){
+				bn = (x/H + h->nacross*(y/V))*H*V + H*(y%V) + x%H;
+				if(bn < 0 || bn >= h->naccoeff[comp])
+					jpgerror(h, "ReadJPG: block number out of range");
 				if(Ah == 0){
 					t = decode(h, dcht);
 					diff = receive(h, t);
-					DC[i] += diff;
-					dc[bn] = qt*DC[i]<<Al;
+					DC[0] += diff;
+					dc[bn] = qt*DC[0]<<Al;
 				}else
 					dc[bn] |= qt*receivebit(h)<<Al;
-				bn++;
+				/* process restart marker, if present */
+				mcu++;
+				if(ri>0 && mcu%ri==0){
+					restart(h, mcu);
+					DC[0] = 0;
+				}
 			}
-			blockno[i] = bn;
 		}
-
-		/* process restart marker, if present */
-		mcu++;
-		if(ri>0 && mcu<nmcu && mcu%ri==0){
-			restart(h, mcu);
-			for(i=0; i<Ns; i++)
-				DC[i] = 0;
+	}else{
+		/* ITU-T.81 A.2.3: scan in MCU order otherwise */
+		nmcu = h->nacross*h->ndown;
+		memset(blockno, 0, sizeof blockno);
+		for(mcu=0; mcu<nmcu; ){
+			for(i=0; i<Ns; i++){
+				comp = scancomp[i];
+				if(comp < 0 || comp >= nelem(h->comp))
+					jpgerror(h, "ReadJPG: scan component out of range");
+				dcht = &h->dcht[Td[i]];
+				qt = h->qt[h->comp[comp].Tq][0];
+				dc = h->dccoeff[comp];
+				bn = blockno[i];
+				for(block=0; block<h->nblock[comp]; block++){
+					if(Ah == 0){
+						t = decode(h, dcht);
+						diff = receive(h, t);
+						DC[i] += diff;
+						dc[bn] = qt*DC[i]<<Al;
+					}else
+						dc[bn] |= qt*receivebit(h)<<Al;
+					bn++;
+				}
+				blockno[i] = bn;
+			}
+	
+			/* process restart marker, if present */
+			mcu++;
+			if(ri>0 && mcu<nmcu && mcu%ri==0){
+				restart(h, mcu);
+				for(i=0; i<Ns; i++)
+					DC[i] = 0;
+			}
 		}
 	}
 }
@@ -978,6 +1016,8 @@ progressiveac(Header *h, int comp, int Al)
 		jpgerror(h, "ReadJPG: illegal Ns>1 in progressive AC scan");
 	Ss = ss[1+2];
 	Se = ss[2+2];
+	if(Ss >= 64 || Se >= 64)
+		jpgerror(h, "ReadJPG: invalid coefficient range in progressive AC scan");
 	H = h->comp[comp].H;
 	V = h->comp[comp].V;
 
@@ -993,6 +1033,8 @@ progressiveac(Header *h, int comp, int Al)
 	h->sr = 0;
 	h->peek = -1;
 	nibbles(ss[1+1], &z, &Ta);	/* z is thrown away */
+	if(Ta > 3)
+		jpgerror(h, "ReadJPG: invalid Huffman table index");
 
 	ri = h->ri;
 
@@ -1003,7 +1045,7 @@ progressiveac(Header *h, int comp, int Al)
 	mcu = 0;
 	for(y=0; y<nver; y++){
 		for(x=0; x<nhor; x++){
-			/* Figure G-3  */
+			/* Figure G-3 */
 			if(eobrun > 0){
 				--eobrun;
 				continue;
@@ -1012,6 +1054,8 @@ progressiveac(Header *h, int comp, int Al)
 			/* arrange blockno to be in same sequence as original scan calculation. */
 			tmcu = x/H + (nacross/H)*(y/V);
 			blockno = tmcu*H*V + H*(y%V) + x%H;
+			if(blockno < 0 || blockno >= h->naccoeff[comp])
+				jpgerror(h, "ReadJPG: block number out of range");
 			acc = h->accoeff[comp][blockno];
 			k = Ss;
 			do {
@@ -1075,6 +1119,8 @@ progressiveacinc(Header *h, int comp, int Al)
 		jpgerror(h, "ReadJPG: illegal Ns>1 in progressive AC scan");
 	Ss = ss[1+2];
 	Se = ss[2+2];
+	if(Ss >= 64 || Se >= 64)
+		jpgerror(h, "ReadJPG: invalid coefficient range in progressive AC scan");
 	H = h->comp[comp].H;
 	V = h->comp[comp].V;
 
@@ -1090,6 +1136,8 @@ progressiveacinc(Header *h, int comp, int Al)
 	h->sr = 0;
 	h->peek = -1;
 	nibbles(ss[1+1], &z, &Ta);	/* z is thrown away */
+	if(Ta > 3)
+		jpgerror(h, "ReadJPG: invalid Huffman table index");
 	ri = h->ri;
 
 	eobrun = 0;
@@ -1104,9 +1152,11 @@ progressiveacinc(Header *h, int comp, int Al)
 		for(x=0; x<nhor; x++){
 			/* Figure G-7 */
 
-			/*  arrange blockno to be in same sequence as original scan calculation. */
+			/* arrange blockno to be in same sequence as original scan calculation. */
 			tmcu = x/H + (nacross/H)*(y/V);
 			blockno = tmcu*H*V + H*(y%V) + x%H;
+			if(blockno < 0 || blockno >= h->naccoeff[comp])
+				jpgerror(h, "ReadJPG: block number out of range");
 			acc = ac[blockno];
 			if(eobrun > 0){
 				if(nzeros > 0)
@@ -1139,7 +1189,7 @@ progressiveacinc(Header *h, int comp, int Al)
 						}
 						break;
 					}
-					for(i=0; i<16; k++){
+					for(i=0; i<16 && k<=Se; k++){
 						increment(h, acc, k, qt[k]<<Al);
 						if(acc[k] == 0)
 							i++;
@@ -1188,6 +1238,8 @@ progressivescan(Header *h, int colorspace)
 		jpgerror(h, "ReadJPG: bad component index in scan header");
 
 	if(Ss == 0){
+		if(Al > 13)
+			jpgerror(h, "ReadJPG: invalid successive approximation for DC");
 		progressivedc(h, comp, Ah, Al);
 		return;
 	}
@@ -1227,8 +1279,8 @@ colormap1(Header *h, int colorspace, Rawimage *image, int data[8*8], int mcu, in
 	k = 0;
 	for(y=0; y<dy; y++){
 		for(x=0; x<dx; x++){
-			r = clamp[(data[k+x]+128)+CLAMPOFF];
-			pic[pici+x] = r;
+			r = data[k+x] + 128;
+			pic[pici+x] = CLAMP(r);
 		}
 		pici += h->X;
 		k += 8;
@@ -1237,7 +1289,9 @@ colormap1(Header *h, int colorspace, Rawimage *image, int data[8*8], int mcu, in
 
 static
 void
-colormapall1(Header *h, int colorspace, Rawimage *image, int data0[8*8], int data1[8*8], int data2[8*8], int mcu, int nacross)
+colormapall1(Header *h, int colorspace, Rawimage *image,
+	int data0[8*8], int data1[8*8], int data2[8*8],
+	int mcu, int nacross)
 {
 	uchar *rpic, *gpic, *bpic, *rp, *gp, *bp;
 	int *p0, *p1, *p2;
@@ -1267,21 +1321,24 @@ colormapall1(Header *h, int colorspace, Rawimage *image, int data0[8*8], int dat
 		bp = bpic+pici;
 		if(colorspace == CYCbCr)
 			for(x=0; x<dx; x++){
-				*rp++ = clamp[*p0++ + 128 + CLAMPOFF];
-				*gp++ = clamp[*p1++ + 128 + CLAMPOFF];
-				*bp++ = clamp[*p2++ + 128 + CLAMPOFF];
+				r = *p0++ + 128;
+				g = *p1++ + 128;
+				b = *p2++ + 128;
+				*rp++ = CLAMP(r);
+				*gp++ = CLAMP(g);
+				*bp++ = CLAMP(b);
 			}
 		else
 			for(x=0; x<dx; x++){
 				Y = (*p0++ + 128) << 11;
 				Cb = *p1++;
 				Cr = *p2++;
-				r = Y+c1*Cr;
-				g = Y-c2*Cb-c3*Cr;
-				b = Y+c4*Cb;
-				*rp++ = clamp[(r>>11)+CLAMPOFF];
-				*gp++ = clamp[(g>>11)+CLAMPOFF];
-				*bp++ = clamp[(b>>11)+CLAMPOFF];
+				r = (Y+c1*Cr) >> 11;
+				g = (Y-c2*Cb-c3*Cr) >> 11;
+				b = (Y+c4*Cb) >> 11;
+				*rp++ = CLAMP(r);
+				*gp++ = CLAMP(g);
+				*bp++ = CLAMP(b);
 			}
 		pici += h->X;
 		k += 8;
@@ -1290,7 +1347,10 @@ colormapall1(Header *h, int colorspace, Rawimage *image, int data0[8*8], int dat
 
 static
 void
-colormap(Header *h, int colorspace, Rawimage *image, int *data0[8*8], int *data1[8*8], int *data2[8*8], int mcu, int nacross, int Hmax, int Vmax,  int *H, int *V)
+colormap(Header *h, int colorspace, Rawimage *image,
+	int *data0[8*8], int *data1[8*8], int *data2[8*8],
+	int mcu, int nacross, int Hmax, int Vmax,
+	int *H, int *V)
 {
 	uchar *rpic, *gpic, *bpic;
 	int x, y, dx, dy, minx, miny;
@@ -1328,20 +1388,20 @@ colormap(Header *h, int colorspace, Rawimage *image, int *data0[8*8], int *data1
 		x2 = 0;
 		for(x=0; x<dx; x++){
 			if(colorspace == CYCbCr){
-				rpic[pici+x] = clamp[data0[b0][y0+x0++*H0/Hmax] + 128 + CLAMPOFF];
-				gpic[pici+x] = clamp[data1[b1][y1+x1++*H1/Hmax] + 128 + CLAMPOFF];
-				bpic[pici+x] = clamp[data2[b2][y2+x2++*H2/Hmax] + 128 + CLAMPOFF];
+				r = data0[b0][y0+x0++*H0/Hmax] + 128;
+				g = data1[b1][y1+x1++*H1/Hmax] + 128;
+				b = data2[b2][y2+x2++*H2/Hmax] + 128;
 			}else{
 				Y = (data0[b0][y0+x0++*H0/Hmax]+128)<<11;
 				Cb = data1[b1][y1+x1++*H1/Hmax];
 				Cr = data2[b2][y2+x2++*H2/Hmax];
-				r = Y+c1*Cr;
-				g = Y-c2*Cb-c3*Cr;
-				b = Y+c4*Cb;
-				rpic[pici+x] = clamp[(r>>11)+CLAMPOFF];
-				gpic[pici+x] = clamp[(g>>11)+CLAMPOFF];
-				bpic[pici+x] = clamp[(b>>11)+CLAMPOFF];
+				r = (Y+c1*Cr) >> 11;
+				g = (Y-c2*Cb-c3*Cr) >> 11;
+				b = (Y+c4*Cb) >> 11;
 			}
+			rpic[pici+x] = CLAMP(r);
+			gpic[pici+x] = CLAMP(g);
+			bpic[pici+x] = CLAMP(b);
 			if(x0*H0/Hmax >= 8){
 				x0 = 0;
 				b0++;
@@ -1369,6 +1429,8 @@ decode(Header *h, Huffman *t)
 	int code, v, cnt, sr, i;
 	int *maxcode;
 
+	if(t->val == nil)
+		jpgerror(h, "ReadJPG: undefined Huffman table");
 	maxcode = t->maxcode;
 	if(h->cnt < 8)
 		nextbyte(h, 0);

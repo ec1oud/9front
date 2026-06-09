@@ -22,7 +22,27 @@ static Ether *etherprobe(int cardno, int ctlrno, char *conf);
 static void dmatproxy(Block*, int, uchar*, DMAT*);
 
 static int etheroqsize(Ether*);
-static int etheriqsize(Ether*);
+
+static void
+drop(void*, Block *b)
+{
+	freeb(b);
+}
+
+static void
+bypass(void *arg, Block *b)
+{
+	Ether *ether;
+	Netfile *f;
+
+	ether = (Ether*)arg;
+	if((f = ether->bypass) == nil){
+		freeb(b);
+		return;
+	}
+	if(qpass(f->in, b) < 0)
+		ether->soverflows++;
+}
 
 Chan*
 etherattach(char* spec)
@@ -98,8 +118,8 @@ etherclose(Chan* chan)
 		if(f->bridge || f->bypass)
 			memset(ether->mactab, 0, sizeof(ether->mactab));
 		if(f->bypass){
+			qsetbypass(ether->oq, ether->link? nil: drop);
 			qsetlimit(ether->oq, etheroqsize(ether));
-			netifsetlimit(ether, etheriqsize(ether));
 		}
 	}
 	netifclose(ether, chan);
@@ -269,8 +289,6 @@ etheriq(Ether* ether, Block* bp)
 static void
 etheroq(Ether* ether, Block* bp, Netfile **from)
 {
-	Netfile *x;
-
 	if((*from)->bridge == 0)
 		memmove(((Etherpkt*)bp->rp)->s, ether->ea, Eaddrlen);
 
@@ -285,15 +303,8 @@ etheroq(Ether* ether, Block* bp, Netfile **from)
 		return;
 	if(ether->dmat != nil)
 		dmatproxy(bp, 1, ether->ea, ether->dmat);
-	if((x = ether->bypass) != nil){
-		if(qpass(x->in, bp) < 0)
-			ether->soverflows++;
-		return;
-	}
 	ether->outpackets++;
 	qbwrite(ether->oq, bp);
-	if(ether->transmit != nil)
-		ether->transmit(ether);
 }
 
 static long
@@ -307,10 +318,10 @@ etherwrite(Chan* chan, void* buf, long n, vlong)
 	if(NETTYPE(chan->qid.path) != Ndataqid) {
 		nn = netifwrite(ether, chan, buf, n);
 		if(nn >= 0){
-			/* ignore mbps and use large input queue size when bypassed */
+			/* got bypassed? */
 			if(ether->f[NETID(chan->qid.path)]->bypass){
-				qflush(ether->oq);
-				netifsetlimit(ether, MB);
+				/* bypass output queue */
+				qsetbypass(ether->oq, bypass);
 			}
 			return nn;
 		}
@@ -409,12 +420,6 @@ etheroqsize(Ether *ether)
 	return q;
 }
 
-static int
-etheriqsize(Ether *ether)
-{
-	return etheroqsize(ether) * 2;
-}
-
 static Ether*
 etherprobe(int cardno, int ctlrno, char *conf)
 {
@@ -431,7 +436,7 @@ etherprobe(int cardno, int ctlrno, char *conf)
 	ether->irq = -1;
 	ether->ctlrno = ctlrno;
 	ether->mbps = 10;
-	ether->link = 0;
+	ether->link = -1;	/* unknown state */
 	ether->minmtu = ETHERMINTU;
 	ether->maxmtu = ETHERMAXTU;
 
@@ -470,13 +475,13 @@ Nope:
 
 	q = etheroqsize(ether);
 	if(ether->oq == nil){
-		ether->oq = qopen(q, Qmsg, 0, 0);
+		ether->oq = qopen(q, Qmsg|Qkick, (void (*)(void*))ether->transmit, ether);
 		if(ether->oq == nil)
 			panic("etherreset %s: can't allocate output queue", ether->name);
 	} else {
 		qsetlimit(ether->oq, q);
 	}
-	netifinit(ether, ether->name, Ntypes, etheriqsize(ether));
+	netifinit(ether, ether->name, Ntypes, 8*MB);
 	ether->alen = Eaddrlen;
 	memmove(ether->addr, ether->ea, Eaddrlen);
 	memset(ether->bcast, 0xFF, Eaddrlen);
@@ -493,23 +498,29 @@ ethersetspeed(Ether *ether, int mbps)
 	if(mbps <= 0 || ether->f == nil || ether->oq == nil || ether->bypass)
 		return;
 	qsetlimit(ether->oq, etheroqsize(ether));
-	netifsetlimit(ether, etheriqsize(ether));
 }
 
 void
-ethersetlink(Ether *ether, int link)
+ethersetlink(Ether *ether, int new)
 {
-	link = !!link;
-	if(!!ether->link == link)
+	int old = ether->link;
+
+	new = !!new;
+	if(old == new)
 		return;
-	ether->link = link;
+	ether->link = new;
 	if(ether->f == nil || ether->bypass)
 		return;
 	memset(ether->mactab, 0, sizeof(ether->mactab));
-	if(link)
+	qsetbypass(ether->oq, ether->link? nil: drop);
+
+	if(up == nil || !islo())
+		return;	/* should not print from interrupt */
+
+	if(ether->link)
 		print("#l%d: %s: link up: %dMbps\n",
 			ether->ctlrno, ether->type, ether->mbps);
-	else
+	else if(old > 0)
 		print("#l%d: %s: link down\n",
 			ether->ctlrno, ether->type);
 }
@@ -647,8 +658,6 @@ netconsputc(Uart *, int c)
 	qiwrite(netcons->ether->oq, p, netcons->n);
 	netcons->n = PktHdr;
 	iunlock(netcons);
-	if(netcons->ether->transmit != nil)
-		netcons->ether->transmit(netcons->ether);
 }
 
 static PhysUart netconsphys = { .putc = netconsputc };

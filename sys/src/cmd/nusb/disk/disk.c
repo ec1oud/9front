@@ -459,6 +459,7 @@ umsrequest(Umsc *umsc, ScsiPtr *cmd, ScsiPtr *data, int *status)
 		}
 	}
 
+Again:
 	/* read the transfer's status */
 	n = read(ums->epin->dfd, &csw, CswLen);
 	if(n <= 0){
@@ -472,8 +473,8 @@ umsrequest(Umsc *umsc, ScsiPtr *cmd, ScsiPtr *data, int *status)
 		goto Fail;
 	}
 	if(csw.tag != cbw.tag){
-		dprint(2, "%s: status tag mismatch\n", argv0);
-		goto Fail;
+		dprint(2, "%s: status tag mismatch: %lux != %lux\n", argv0, csw.tag, cbw.tag);
+		goto Again;
 	}
 	if(csw.status >= CswPhaseErr){
 		dprint(2, "%s: phase error\n", argv0);
@@ -771,8 +772,11 @@ dread(Req *req)
 			break;
 		case Pstatus:
 			n = snprint(buf, sizeof buf, "%11.0ud ", lun->status);
-			readbuf(req, buf, n);
+			if(n < count)
+				count = n;
 			lun->phase = Pcmd;
+			req->ofcall.count = count;
+			memmove(data, buf, count);
 			respond(req, nil);
 			break;
 		}
@@ -998,8 +1002,8 @@ Found:
 		return -1;
 	}
 
-	devctl(ums->epin, "timeout 2000");
-	devctl(ums->epout, "timeout 2000");
+	devctl(ums->epin, "timeout 5000");
+	devctl(ums->epout, "timeout 5000");
 	if(usbdebug > 1 || diskdebug > 2){
 		devctl(ums->epin, "debug 1");
 		devctl(ums->epout, "debug 1");

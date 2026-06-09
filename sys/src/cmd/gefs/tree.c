@@ -116,7 +116,7 @@ getval(Blk *b, int i, Kvp *kv)
 Bptr
 getptr(Kvp *kv, int *fill)
 {
-	assert(kv->nv == Ptrsz || kv->nv == Ptrsz+2);
+	assert(kv->nv == Ptrsz+2);
 	*fill = UNPACK16(kv->v + Ptrsz);
 	return unpackbp(kv->v, kv->nv);
 }
@@ -552,7 +552,8 @@ updateleaf(Tree *t, Path *up, Path *p)
 			ok = 0;
 			if(m.op != Oclearb && m.op != Oclobber){
 				/* New keys need to start off with Oinsert */
-				assert(m.op == Oinsert);
+				if(m.op != Oinsert)
+					broke("%s: broken entry: %M\n", Efs, &m);
 				spc -= valsz(&m);
 				p->pullsz += msgsz(&m);
 				ok = 1;
@@ -757,7 +758,8 @@ splitleaf(Tree *t, Path *up, Path *p)
 			ok = 0;
 			if(m.op != Oclearb && m.op != Oclobber){
 				/* New keys need to start off with Oinsert */
-				assert(m.op == Oinsert);
+				if(m.op != Oinsert)
+					broke("%s: broken entry: %M\n", Efs, &m);
 				spc -= valsz(&m);
 				p->pullsz += msgsz(&m);
 				ok = 1;
@@ -899,7 +901,7 @@ spillscan(Blk *d, Blk *b, Msg *m, int *idx, int o)
 	Msg n;
 
 	used = 2*d->nbuf + d->bufsz;
-	for(i = *idx; i < b->nbuf; i++){
+	for(i = *idx-o; i < b->nbuf; i++){
 		getmsg(b, i, &n);
 		if(keycmp(m, &n) <= 0){
 			*idx = i + o;
@@ -1114,6 +1116,7 @@ flush(Tree *t, Path *path, int npath)
 			trybalance(t, p, pp, p->idx);
 			/* If we merged the root node, break out. */
 			if(up == path && pp != nil && pp->op == POmerge && p->b->nval == 2){
+				pp->npull = p->npull;
 				rp = pp;
 				goto Out;
 			}
@@ -1265,8 +1268,6 @@ btupsert(Tree *t, Msg *msg, int nmsg)
 	Bptr bp;
 
 	assert(!canqlock(&fs->mutlk));
-	if(agetl(&fs->rdonly))
-		error(Erdonly);
 	sz = 0;
 	stablesort(msg, nmsg);
 	for(i = 0; i < nmsg; i++){
@@ -1548,7 +1549,8 @@ Again:
 		getval(p[h-1].b, p[h-1].vi, &m);
 	}else{
 		getmsg(p[start-1].b, p[start-1].bi, &m);
-		assert(m.op == Oinsert);
+		if(m.op != Oinsert)
+			broke("%s: broken entry: %M\n", Efs, &m);
 		bufsrc = start-1;
 	}
 

@@ -1003,25 +1003,14 @@ tsame(int t1, int t2)
 /*
  *  Add resource records to a list.
  */
-RR*
-rrcat(RR **start, RR *rp)
+void
+rrcat(RR **l, RR *rp)
 {
-	RR *olp, *nlp;
-	RR **last;
-
-	/* check for duplicates */
-	for (olp = *start; 0 && olp; olp = olp->next)
-		for (nlp = rp; nlp; nlp = nlp->next)
-			if (rrsame(nlp, olp))
-				dnslog("rrcat: duplicate RR: %R", nlp);
-	USED(olp);
-
-	last = start;
-	while(*last != nil)
-		last = &(*last)->next;
-
-	*last = rp;
-	return *start;
+	if(rp == nil)
+		return;
+	while(*l != nil)
+		l = &(*l)->next;
+	*l = rp;
 }
 
 RR*
@@ -1368,7 +1357,7 @@ rravfmt(Fmt *f)
 		break;
 	case Tsrv:
 		srv = rp->srv;
-		fmtprint(&fstr, " pri=%ud weight=%ud port=%ud target=%s",
+		fmtprint(&fstr, " pri=%ud weight=%ud port=%ud srv=%s",
 			(srv? srv->pri: 0), (srv? srv->weight: 0),
 			rp->port, idnname(rp->host, buf, sizeof(buf)));
 		break;

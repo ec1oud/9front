@@ -4,7 +4,7 @@ upas/fs \- mail file server
 .SH SYNOPSIS
 .B upas/fs
 [
-.B -DSbdfilnps
+.B -CDSbdfilnps
 ][
 .B -c
 .I cachtarg
@@ -314,6 +314,9 @@ to maintain other flags.
 The options are:
 .TF "-c cachetarg
 .TP
+.B -C
+ignore bad thumbprints for TLS connections.
+.TP
 .B -D
 Trace 9P protocol messages.
 .TP
@@ -487,3 +490,6 @@ Erik Quanstrom
 ``Scaling Upas'',
 Proceedings of IWP9,
 October, 2008.
+.br
+.B /sys/doc/nupas/nupas.pdf
+

@@ -1110,7 +1110,7 @@ ntohtcp6(Tcp *tcph, Block **bpp)
 	uchar *optr;
 	ushort hdrlen;
 	ushort optlen;
-	int n;
+	int n, len;
 
 	*bpp = pullupblock(*bpp, TCP6_PKT+TCP6_HDRSIZE);
 	if(*bpp == nil)
@@ -1123,6 +1123,7 @@ ntohtcp6(Tcp *tcph, Block **bpp)
 	tcph->ack = nhgetl(h->tcpack);
 	hdrlen = (h->tcpflag[0]>>2) & ~3;
 	if(hdrlen < TCP6_HDRSIZE) {
+Badlen:
 		freeblist(*bpp);
 		*bpp = nil;
 		return -1;
@@ -1133,7 +1134,10 @@ ntohtcp6(Tcp *tcph, Block **bpp)
 	tcph->mss = 0;
 	tcph->ws = 0;
 	tcph->update = 0;
-	tcph->len = nhgets(h->ploadlen) - hdrlen;
+	len = nhgets(h->ploadlen) - hdrlen;
+	if(len < 0)
+		goto Badlen;
+	tcph->len = len;
 
 	*bpp = pullupblock(*bpp, hdrlen+TCP6_PKT);
 	if(*bpp == nil)
@@ -1173,7 +1177,7 @@ ntohtcp4(Tcp *tcph, Block **bpp)
 	uchar *optr;
 	ushort hdrlen;
 	ushort optlen;
-	int n;
+	int n, len;
 
 	*bpp = pullupblock(*bpp, TCP4_PKT+TCP4_HDRSIZE);
 	if(*bpp == nil)
@@ -1187,6 +1191,7 @@ ntohtcp4(Tcp *tcph, Block **bpp)
 
 	hdrlen = (h->tcpflag[0]>>2) & ~3;
 	if(hdrlen < TCP4_HDRSIZE) {
+Badlen:
 		freeblist(*bpp);
 		*bpp = nil;
 		return -1;
@@ -1197,7 +1202,10 @@ ntohtcp4(Tcp *tcph, Block **bpp)
 	tcph->mss = 0;
 	tcph->ws = 0;
 	tcph->update = 0;
-	tcph->len = nhgets(h->length) - (hdrlen + TCP4_PKT);
+	len = nhgets(h->length) - (hdrlen + TCP4_PKT);
+	if(len < 0)
+		goto Badlen;
+	tcph->len = len;
 
 	*bpp = pullupblock(*bpp, hdrlen+TCP4_PKT);
 	if(*bpp == nil)
@@ -2923,7 +2931,7 @@ tcpadvise(Proto *tcp, Block *bp, Ipifc *ifc, char *msg)
 
 	/* Look for a connection (source/dest reversed; this is the original packet we sent) */
 	qlock(tcp);
-	iph = iphtlook(&((Tcppriv*)tcp->priv)->ht, dest, pdest, source, psource);
+	iph = iphtlook(tcp->ht, dest, pdest, source, psource);
 	if(iph == nil || iph->match != IPmatchexact)
 		goto raise;
 	if(iph->trans){
@@ -2978,7 +2986,7 @@ tcpforward(Proto *tcp, Block *bp, Route *r)
 		r = nil;
 
 	qlock(tcp);
-	q = transforward(tcp, &((Tcppriv*)tcp->priv)->ht, sa, sp, da, dp, r);
+	q = transforward(tcp, sa, sp, da, dp, r);
 	if(q == nil){
 		qunlock(tcp);
 		freeblist(bp);
@@ -3169,6 +3177,7 @@ tcpinit(Fs *fs)
 
 	tcp = smalloc(sizeof(Proto));
 	tcp->priv = tpriv = smalloc(sizeof(Tcppriv));
+	tcp->ht = &tpriv->ht;
 	tcp->name = "tcp";
 	tcp->connect = tcpconnect;
 	tcp->announce = tcpannounce;

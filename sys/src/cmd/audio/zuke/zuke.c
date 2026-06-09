@@ -312,8 +312,6 @@ redraw_(int full)
 	w += stringwidth(f, tmp+i);
 	snprint(tmp+i, sizeof(tmp)-i, "%d%%", volume);
 
-	lockdisplay(display);
-
 	if(back == nil || Dx(screen->r) != Dx(back->r) || Dy(screen->r) != Dy(back->r)){
 		freeimage(back);
 		back = allocimage(display, Rpt(ZP,subpt(screen->r.max, screen->r.min)), XRGB32, 0, DNofill);
@@ -376,6 +374,8 @@ redraw_(int full)
 		if(full || cover != ocover){
 			border(screen, r, 4, colors[Dblow].im, ZP);
 			draw(screen, insetrect(r, 4), cover, nil, ZP);
+			if(ocover != nil && !eqrect(cover->r, ocover->r))
+				full = 1;
 		}
 		bp[1] = bp[0];
 		bp[0].max.y = r.min.y;
@@ -455,7 +455,6 @@ redraw_(int full)
 	opcur = pcur;
 
 	flushimage(display, 1);
-	unlockdisplay(display);
 }
 
 static void
@@ -1359,8 +1358,6 @@ threadmain(int argc, char **argv)
 
 	if(initdraw(nil, nil, "zuke") < 0)
 		sysfatal("initdraw: %r");
-	unlockdisplay(display);
-	display->locking = 1;
 	f = display->defaultfont;
 	Scrollwidth = MAX(14, stringwidth(f, "#"));
 	Scrollheight = MAX(16, f->height);

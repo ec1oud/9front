@@ -2,6 +2,9 @@
 #include <libc.h>
 #include <geometry.h>
 
+Point2 ZP2;
+Point3 ZP3;
+
 /* 2D */
 
 Point2
@@ -81,6 +84,39 @@ normvec2(Point2 v)
 	if(len == 0)
 		return (Point2){0,0,0};
 	return (Point2){v.x/len, v.y/len, 0};
+}
+
+Point2
+centroid(Point2 *pts, ulong npts)
+{
+	Point2 p;
+	ulong i;
+
+	p = pts[0];
+	for(i = 1; i < npts; i++)
+		p = addpt2(p, pts[i]);
+	return divpt2(p, npts);
+}
+
+/*
+ * based on the implementation from:
+ *
+ * Dmitry V. Sokolov, “Tiny Renderer: Lesson 2”,
+ * https://github.com/ssloy/tinyrenderer/wiki/Lesson-2:-Triangle-rasterization-and-back-face-culling
+ */
+Point3
+barycoords(Point2 p0, Point2 p1, Point2 p2, Point2 p)
+{
+	Point2 p0p1 = subpt2(p1, p0);
+	Point2 p0p2 = subpt2(p2, p0);
+	Point2 pp0  = subpt2(p0, p);
+
+	Point3 v = crossvec3(Vec3(p0p2.x, p0p1.x, pp0.x), Vec3(p0p2.y, p0p1.y, pp0.y));
+
+	/* handle degenerate triangles—i.e. the ones where every point lies on the same line */
+	if(fabs(v.z) < 1)
+		return Pt3(-1,-1,-1,1);
+	return Pt3(1 - (v.x + v.y)/v.z, v.y/v.z, v.x/v.z, 1);
 }
 
 /*
@@ -215,6 +251,18 @@ normvec3(Point3 v)
 	if(len == 0)
 		return (Point3){0,0,0,0};
 	return (Point3){v.x/len, v.y/len, v.z/len, 0};
+}
+
+Point3
+centroid3(Point3 *pts, ulong npts)
+{
+	Point3 p;
+	ulong i;
+
+	p = pts[0];
+	for(i = 1; i < npts; i++)
+		p = addpt3(p, pts[i]);
+	return divpt3(p, npts);
 }
 
 int

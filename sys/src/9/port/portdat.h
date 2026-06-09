@@ -13,13 +13,13 @@ typedef struct Evalue	Evalue;
 typedef struct Fgrp	Fgrp;
 typedef struct DevConf	DevConf;
 typedef struct Image	Image;
+typedef struct Lock	Lock;
 typedef struct Log	Log;
 typedef struct Logflag	Logflag;
 typedef struct Mntcache Mntcache;
 typedef struct Mount	Mount;
 typedef struct Mntrah	Mntrah;
 typedef struct Mntrpc	Mntrpc;
-typedef struct Mntproc	Mntproc;
 typedef struct Mnt	Mnt;
 typedef struct Mhead	Mhead;
 typedef struct Note	Note;
@@ -59,11 +59,22 @@ typedef int    Devgen(Chan*, char*, Dirtab*, int, int, Dir*);
 #pragma incomplete Edf
 #pragma incomplete Mntcache
 #pragma incomplete Mntrpc
+#pragma incomplete Mnt
 #pragma incomplete Queue
 #pragma incomplete Timers
 #pragma incomplete Tos
 
 #include <fcall.h>
+
+struct Lock
+{
+	ulong	key;
+	ulong	sr;
+	uintptr	pc;
+	Proc	*p;
+	Mach	*m;
+	ushort	isilock;
+};
 
 struct Ref
 {
@@ -260,11 +271,12 @@ struct Walkqid
 
 struct Mount
 {
-	uvlong	mountid;
-	int	mflag;
-	Mount*	next;
-	Mount*	order;
+	Mount*	order;			/* Pgrp.mntorder chain */
+	Mount*	norder;			/* forward pointer for pgrpcpy() */
+	Mount*	next;			/* Mhead.mount chain */
+	Mhead*	umh;			/* the union we belong to */ 
 	Chan*	to;			/* channel replacing channel */
+	int	mflag;
 	char	spec[];
 };
 
@@ -281,39 +293,12 @@ struct Mntrah
 {
 	Rendez;
 
-	ulong	vers;
-
 	vlong	off;
 	vlong	seq;
+	ulong	vers;
 
 	uint	i;
 	Mntrpc	*r[8];
-};
-
-struct Mntproc
-{
-	Rendez;
-
-	Mnt	*m;
-	Mntrpc	*r;
-	void	*a;
-	void	(*f)(Mntrpc*, void*);
-};
-
-struct Mnt
-{
-	Lock;
-	/* references are counted using c->ref; channels on this mount point incref(c->mchan) == Mnt.c */
-	Chan	*c;		/* Channel to file service */
-	Proc	*rip;		/* Reader in progress */
-	Mntrpc	*queue;		/* Queue of pending requests on this channel */
-	Mntproc	defered[8];	/* Worker processes for defered RPCs (read ahead) */
-	ulong	id;		/* Multiplexer id for channel check */
-	Mnt	*list;		/* Free list */
-	int	flags;		/* cache */
-	int	msize;		/* data + IOHDRSZ */
-	char	*version;	/* 9P version */
-	Queue	*q;		/* input queue */
 };
 
 enum
@@ -512,7 +497,9 @@ struct Pgrp
 {
 	Ref;
 	RWLock	ns;			/* Namespace n read/one write lock */
-	u64int	notallowed[4];		/* Room for 256 devices */
+	uchar	devmask[256/8];		/* Room for 256 devices */
+	Mount	*mntorder;		/* Ordered list of mounts */
+	Mount	**mntordertail;
 	Mhead	*mnthash[MNTHASH];
 };
 
@@ -567,9 +554,9 @@ struct Palloc
 	Lock;
 	Page	*head;			/* freelist head */
 	ulong	freecount;		/* how many pages on free list now */
-	Page	*pages;			/* array of all pages */
 	ulong	user;			/* how many user pages */
-	Rendezq		pwait[2];	/* Queues of procs waiting for memory */
+	Page	*pages;			/* array of all pages */
+	Rendezq	pwait[2];		/* Queues of procs waiting for memory */
 };
 
 struct Waitq

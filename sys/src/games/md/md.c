@@ -8,7 +8,8 @@
 #include "fns.h"
 
 u16int *prg;
-int nprg;
+u32int prgend;
+u16int *cart, *tmss;
 u8int *sram;
 u32int sramctl, nsram, sram0, sram1;
 int savefd = -1;
@@ -40,32 +41,74 @@ loadbat(char *file)
 }
 
 static void
+loadtmss(void)
+{
+	int fd;
+	u16int *p;
+	uchar buf[4096];
+	int i;
+
+	fd = open("/sys/games/lib/mdtmss.bin", OREAD);
+	if(fd < 0)
+		return;
+	p = tmss = malloc(4096);
+	if(tmss == nil)
+		sysfatal("oom");
+	if(readn(fd, buf, 4096) != 4096)
+		sysfatal("short read on tmss: %r");
+	for(i = 0; i < 4096; i += 2)
+		*p++ = buf[i] << 8 | buf[i+1];
+	close(fd);
+}
+
+struct {
+	char a[16];
+	int n;
+} systems[] = {
+	"SEGA MEGA DRIVE", 15,
+	"SEGA GENESIS", 12,
+	/* homebrew */
+	"SEGA SSF", 8
+};
+
+static void
 loadrom(char *file)
 {
 	static uchar hdr[512], buf[4096];
 	u32int v;
 	u16int *p;
-	int fd, rc, i;
-	
+	int fd, rc, i, n;
+	vlong r;
+
 	fd = open(file, OREAD);
 	if(fd < 0)
 		sysfatal("open: %r");
 	if(readn(fd, hdr, 512) < 512)
 		sysfatal("read: %r");
-	if(memcmp(hdr + 0x100, "SEGA MEGA DRIVE ", 16) != 0 && memcmp(hdr + 0x100, "SEGA GENESIS    ", 16) != 0)
-		sysfatal("invalid rom");
+	for(i = 0; i < nelem(systems); i++)
+		if(memcmp(hdr + 0x100, systems[i].a, systems[i].n) == 0)
+			break;
+	if(i == nelem(systems))
+		sysfatal("invalid rom system type: %.*s", 16, (char*)(hdr + 0x100));
+
 	v = hdr[0x1a0] << 24 | hdr[0x1a1] << 16 | hdr[0x1a2] << 8 | hdr[0x1a3];
 	if(v != 0)
-		sysfatal("rom starts at nonzero address");
+		sysfatal("rom starts at nonzero address: %ux", v);
 	v = hdr[0x1a4] << 24 | hdr[0x1a5] << 16 | hdr[0x1a6] << 8 | hdr[0x1a7];
-	nprg = v = v+2 & ~1;
-	if(nprg == 0)
+	prgend = v+2 & ~1;
+	if(prgend == 0)
 		sysfatal("invalid rom");
-	p = prg = malloc(v);
-	if(prg == nil)
+	r = seek(fd, -1, 2);
+	if(r < 0)
+		sysfatal("rom seek: %r");
+	if(r > 32*1024*1024)
+		sysfatal("rom above max size of 32M");
+	n = r+2 & ~1;
+	p = cart = malloc(n);
+	if(cart == nil)
 		sysfatal("malloc: %r");
 	seek(fd, 0, 0);
-	while(v != 0){
+	for(v = n; v != 0;){
 		rc = readn(fd, buf, sizeof buf);
 		if(rc == 0)
 			break;
@@ -100,6 +143,10 @@ loadrom(char *file)
 			}
 		}
 	}
+	if(tmss != nil)
+		prg = tmss;
+	else
+		prg = cart;
 }
 
 void
@@ -126,16 +173,21 @@ threadmain(int argc, char **argv)
 	} ARGEND;
 	if(argc < 1)
 		usage();
+	loadtmss();
 	loadrom(*argv);
 	initemu(320, 224, 4, XRGB32, 1, nil);
-	regkey("a", 'c', 1<<5);
-	regkey("b", 'x', 1<<4);
+	regkey("a", 'c', 0x200020);
+	regkey("b", 'x', 0x100010);
 	regkey("y", 'z', 1<<12);
 	regkey("start", '\n', 1<<13);
 	regkey("up", Kup, 0x101);
 	regkey("down", Kdown, 0x202);
 	regkey("left", Kleft, 1<<2);
 	regkey("right", Kright, 1<<3);
+	regkey("x", 'a', 1<<18);
+	regkey("l1", 's', 1<<17);
+	regkey("r1", 'd', 1<<16);
+	regkey("control", '\t', 1<<19);
 	cpureset();
 	vdpmode();
 	ymreset();
@@ -184,6 +236,7 @@ threadmain(int argc, char **argv)
 void
 flush(void)
 {
+	flushport();
 	flushmouse(1);
 	flushscreen();
 	flushaudio(audioout);

@@ -54,12 +54,14 @@ readblk(Blk *b, Bptr bp, int flg)
 
 	off = bp.addr;
 	rem = Blksz;
+	p = b->buf;
 	while(rem != 0){
-		n = pread(fs->fd, b->buf, rem, off);
+		n = pread(fs->fd, p, rem, off);
 		if(n <= 0)
 			error("%s: %r", Eio);
-		off += n;
 		rem -= n;
+		off += n;
+		p += n;
 	}
 	b->cnext = nil;
 	b->cprev = nil;
@@ -79,7 +81,7 @@ readblk(Blk *b, Bptr bp, int flg)
 	b->type = (flg&GBraw) ? Tdat : UNPACK16(b->buf+0);
 	switch(b->type){
 	default:
-		broke("invalid block type %d @%llx", b->type, bp);
+		error("invalid block type %d @%llx", b->type, bp);
 		break;
 	case Tdat:
 	case Tsuper:
@@ -119,7 +121,7 @@ readblk(Blk *b, Bptr bp, int flg)
 		ck = blkhash(b);
 	}
 	if((flg&GBnochk) == 0 && ck != xh)
-		broke("%s: %ullx %llux != %llux", Ecorrupt, bp.addr, xh, ck);
+		error("%s: %ullx %llux != %llux", Ecorrupt, bp.addr, xh, ck);
 	bassert(b, b->magic == Magic);
 }
 
@@ -280,7 +282,6 @@ logappend(Arena *a, vlong off, vlong len, int op)
 	bassert(lb, agetl(&lb->ref) > 0);
 	bassert(lb, lb->type == Tlog);
 	bassert(lb, lb->logsz >= 0);
-	dprint("logop %d: %llx+%llx@%x\n", op, off, len, lb->logsz);
 
 	if(checkflag(lb, 0, Bdirty))
 		setflag(lb, Bdirty, Bfinal);
@@ -735,6 +736,10 @@ getblk(Bptr bp, int flg)
 	qlock(&fs->blklk[i]);
 	if(waserror()){
 		qunlock(&fs->blklk[i]);
+		if(flg&GBtry)
+			return nil;
+		else
+			aincl(&fs->rdonly, 1);
 		nexterror();
 	}
 	if((b = cacheget(bp.addr)) != nil){
@@ -884,11 +889,9 @@ Again:
 	for(i = 0; i < agetl(&fs->nworker); i++){
 		e = agetl(&fs->lepoch[i]);
 		if((e & Eactive) && e != (ge | Eactive)){
-			if(delay < 1000)
-				delay++;
-			else
+			if(delay == 300)
 				fprint(2, "stalled epoch %lx [worker %d]\n", e, i);
-			sleep(delay);
+			sleep(delay++);
 			goto Again;
 		}
 	}
@@ -899,6 +902,7 @@ epochclean(void)
 {
 	ulong c, e, ge;
 	Limbo *p, *n;
+	Dlist *dl;
 	Blk *b;
 	Bfree *f;
 	Arena *a;
@@ -954,6 +958,11 @@ epochclean(void)
 			a = getarena(b->bp.addr);
 			dropblk(b);
 			qput(a->sync, qe);
+			break;
+		case DFdlist:
+			dl = (Dlist*)p;
+			freedl(dl, 1);
+			free(dl);
 			break;
 		default:
 			abort();

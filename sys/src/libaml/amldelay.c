@@ -3,6 +3,6 @@
 #include <aml.h>
 
 void
-amldelay(int)
+amldelay(uvlong)
 {
 }

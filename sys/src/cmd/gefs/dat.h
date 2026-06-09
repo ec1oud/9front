@@ -68,6 +68,7 @@ enum {
 	Dlkvpsz	= Dlksz+Dlvsz,		/* full size of dlist kvp */
 	Treesz	= 4+4+4+4		/* ref, ht, flg, gen, pred, succ, base, root */
 		  +8+8+8+8+Ptrsz,
+	Xdirsz	= 8+8+4+1+4+8+8+8+4+4+4, /* flag, qpath, qvers, qtype, mode, atime, mtime, len, uid, gid, muid */
 	Kvmax	= Keymax + Inlmax,	/* Key and value */
 	Kpmax	= Keymax + Ptrsz,	/* Key and pointer */
 	Wstatmax = 4+8+8+8,		/* mode, size, atime, mtime */
@@ -175,20 +176,22 @@ extern char Elocked[];
 extern char Eauthp[];
 extern char Eauthd[];
 extern char Eauthph[];
-extern char Ephase[];
 extern char Enone[];
 extern char Enoauth[];
+extern char Ephase[];
+extern char Ecdir[];
+extern char Ectl[];
+extern char Enoqid[];
 
+extern char Ewstatt[];
 extern char Ewstatb[];
 extern char Ewstatd[];
 extern char Ewstatg[];
 extern char Ewstatl[];
 extern char Ewstatm[];
 extern char Ewstato[];
-extern char Ewstatp[];
 extern char Ewstatq[];
 extern char Ewstatu[];
-extern char Ewstatv[];
 extern char Enempty[];
 
 /*
@@ -276,6 +279,7 @@ enum {
 	GBraw	= 1<<0,
 	GBwrite	= 1<<1,
 	GBnochk	= 1<<2,
+	GBtry	= 1<<3,
 };
 
 enum {
@@ -341,6 +345,7 @@ enum {
 	DFbp,
 	DFmnt,
 	DFtree,
+	DFdlist,
 };
 
 struct Limbo {
@@ -375,6 +380,7 @@ struct Msg {
 };
 
 struct Dlist {
+	Limbo;
 	Dlist	*cnext;	/* cache next entry */
 	Dlist	*cprev;	/* cache prev entry */
 	Dlist	*chain;	/* hash table chain */

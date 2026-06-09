@@ -56,7 +56,6 @@ dlcachedel(Dlist *dl, int hdel)
 		dl->cprev->cnext = dl->cnext;
 	dl->cnext = nil;
 	dl->cprev = nil;
-	fs->dlcount--;
 }
 
 static Dlist*
@@ -87,7 +86,9 @@ getdl(vlong gen, vlong bgen)
 	if((dl = dlcacheget(gen, bgen)) != nil)
 		return dl;
 	dl = emalloc(sizeof(Dlist), 1);
+	fs->dlcount++;
 	if(waserror()){
+		fs->dlcount--;
 		free(dl);
 		nexterror();
 	}
@@ -131,6 +132,7 @@ putdl(Dlist *dl)
 		return;
 	dlcachedel(dl, 0);
 	while(fs->dlcount >= fs->dlcmax && (dt = fs->dltail) != nil){
+		fs->dlcount--;
 		dlcachedel(dt, 1);
 		dlflush(dt);
 		assert(dt->ins == nil);
@@ -144,7 +146,6 @@ putdl(Dlist *dl)
 	if(fs->dlhead != nil)
 		fs->dlhead->cprev = dl;
 	fs->dlhead = dl;
-	fs->dlcount++;
 }
 
 void
@@ -228,8 +229,7 @@ mergedl(vlong merge, vlong gen, vlong bgen)
 			d->hd = m->hd;
 			d->tl = m->tl;
 			d->ins = m->ins;
-			if(d->ins != nil)
-				holdblk(d->ins);
+			m->ins = nil;
 		}else{
 			if(m->ins != nil){
 				enqueue(m->ins);
@@ -359,6 +359,10 @@ delsnap(Tree *t, vlong succ, char *name)
 		m[nm].v = nil;
 		m[nm].nv = 0;
 		nm++;
+	}else{
+		m[nm].op = Oinsert;
+		tree2kv(t, &m[nm], buf[nm], sizeof(buf[nm]));
+		nm++;
 	}
 	assert(nm <= nelem(m));
 	dlsync();
@@ -408,8 +412,16 @@ tagsnap(Tree *t, char *name, int flg)
 		n->ht = t->ht;
 		n->bp = t->bp;
 		n->succ = -1;
+		/*
+		 * Because we can have blocks in-flight with gen==memgen,
+		 * which both sides of the fork can free, we need to make
+		 * sure that we don't deadlist them in the new snapshot.
+		 *
+		 * As a result, we need to use memgen, and not gen, in
+		 * order to prevent the potential for a double free.
+		 */
 		n->pred = t->gen;
-		n->base = t->gen;
+		n->base = t->memgen;
 		n->gen = fs->nextgen++;
 		n->memgen = fs->nextgen++;
 

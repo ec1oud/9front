@@ -328,7 +328,6 @@ udpkick(void *x, Block *bp)
 void
 udpiput(Proto *udp, Ipifc *ifc, Block *bp)
 {
-	int len;
 	Udp4hdr *uh4;
 	Udp6hdr *uh6;
 	Iphash *iph;
@@ -338,9 +337,8 @@ udpiput(Proto *udp, Ipifc *ifc, Block *bp)
 	ushort rport, lport;
 	Udppriv *upriv;
 	Fs *f;
-	int version;
-	int ottl, oviclfl, olen;
 	uchar *p;
+	int version, ottl, oviclfl, olen, len;
 
 	upriv = udp->priv;
 	f = udp->f;
@@ -406,7 +404,7 @@ udpiput(Proto *udp, Ipifc *ifc, Block *bp)
 	}
 
 	qlock(udp);
-	iph = iphtlook(&upriv->ht, raddr, rport, laddr, lport);
+	iph = iphtlook(udp->ht, raddr, rport, laddr, lport);
 	if(iph == nil){
 Noconv:
 		/* no conversation found */
@@ -586,7 +584,7 @@ udpadvise(Proto *udp, Block *bp, Ipifc *ifc, char *msg)
 
 	/* Look for a connection (source/dest reversed; this is the original packet we sent) */
 	qlock(udp);
-	iph = iphtlook(&((Udppriv*)udp->priv)->ht, dest, pdest, source, psource);
+	iph = iphtlook(udp->ht, dest, pdest, source, psource);
 	if(iph == nil || iph->match != IPmatchexact)
 		goto raise;
 	if(iph->trans){
@@ -636,7 +634,7 @@ udpforward(Proto *udp, Block *bp, Route *r)
 	sp = nhgets(uh4->udpsport);
 
 	qlock(udp);
-	q = transforward(udp, &((Udppriv*)udp->priv)->ht, sa, sp, da, dp, r);
+	q = transforward(udp, sa, sp, da, dp, r);
 	if(q == nil){
 		qunlock(udp);
 		freeblist(bp);
@@ -671,6 +669,7 @@ udpinit(Fs *fs)
 
 	udp = smalloc(sizeof(Proto));
 	udp->priv = smalloc(sizeof(Udppriv));
+	udp->ht = &((Udppriv*)udp->priv)->ht;
 	udp->name = "udp";
 	udp->connect = udpconnect;
 	udp->announce = udpannounce;
