@@ -191,6 +191,36 @@ A file
 .BI /dev/hid N ctl
 supports setting keyboard repeat and delay setting, the unit is
 milliseconds.
+.PP
+A Windows Precision Touchpad is switched into multitouch mode and its
+contacts are turned into mouse events by a small gesture engine:
+one finger moves the pointer, two fingers scroll, a physical click or a
+quick one-finger tap is button 1, and a menu button is armed by holding
+one finger and tapping others \(em tapping a second finger holds button 3
+(the right menu) and tapping two more holds button 2 (the middle menu)
+until the holding finger lifts, so the menu can be dragged and released
+onto an item.
+When a touchpad is present the same
+.BI /dev/hid N ctl
+file accepts additional settings, one per line as
+.IR name " " value :
+.B gainx
+and
+.B gainy
+scale pointer motion,
+.B scroll
+is the finger travel per scroll notch,
+.BR taptime " (ns) and " taptravel
+bound a tap,
+.B suppress
+is the number of motion frames dropped after a physical click,
+.B scrollstart
+is how far the holding finger may travel before a second finger counts as
+a scroll rather than a menu tap, and
+.B menutime
+(ns) bounds how long fingers may rest before they count as a scroll.
+Travel values are in units of the pad width or height scaled to 2^31.
+Reading the file reports the current values.
 .SS Joysticks
 .I Joy
 parses data packets from a given endpoint and prints back

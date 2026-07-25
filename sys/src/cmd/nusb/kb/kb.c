@@ -214,6 +214,7 @@ static int debug = 0;
 static int kbdelay = 500;
 static int kbrepeat = 100;
 static int havekbd;
+static int havetpad;		/* a precision touchpad is present */
 
 static int
 signext(int v, int bits)
@@ -712,31 +713,35 @@ static int ptpsetmode(Hiddev *f);
  * engine can later be driven from the PS/2 Synaptics decoder.
  */
 enum {
-	Tpgainx		= 1600,		/* full-width finger travel -> ~px */
-	Tpgainy		= 900,		/* full-height (pad is wider than tall) */
-	Scrollthresh	= 178956971,	/* ~2^31/12: pad height -> ~12 notches */
 	Maxcontacts	= 8,
-
-	Taptime		= 180000000,	/* ns: max touch duration for a tap */
-	Taptravel	= 100000000,	/* ~5% of pad: max movement for a tap */
-	Suppressframes	= 3,		/* motion frames to drop after a press */
-
-	/*
-	 * When a second finger lands while one finger is already down we
-	 * don't yet know whether the user is starting a two-finger scroll or
-	 * tapping extra fingers to arm a menu button.  Suppress both until we
-	 * decide: if the primary finger travels past Scrollstart the fingers
-	 * are dragging, so commit to scrolling; if instead the extra fingers
-	 * lift again (within Menuwindow) while the primary stayed put it was a
-	 * tap, so arm a menu.  Deciding on motion rather than time lets the
-	 * window be generous (a one-handed two-finger tap is slow) without
-	 * making scrolling feel laggy, and tolerates the holding finger
-	 * drifting a little.  Menuwindow still bounds a motionless rest so two
-	 * fingers left sitting on the pad eventually count as a scroll.
-	 */
-	Scrollstart	= 120000000,	/* ~5.6% of pad: motion => it's a scroll */
-	Menuwindow	= 250000000,	/* ns: max still hold before it's a scroll */
 };
+
+/*
+ * Touchpad gesture tunables.  These are globals (not enum constants) so
+ * they can be adjusted at runtime by writing the hidU*ctl file; see fsread
+ * and fswrite.  Contact coordinates are normalised 0..2^31 across the pad,
+ * so the travel thresholds are fractions of that; the time values are ns.
+ *
+ * When a second finger lands while one finger is already down we don't yet
+ * know whether the user is starting a two-finger scroll or tapping extra
+ * fingers to arm a menu button.  Suppress both until we decide: if the
+ * primary finger travels past scrollstart the fingers are dragging, so
+ * commit to scrolling; if instead the extra fingers lift again (within
+ * menutime) while the primary stayed put it was a tap, so arm a menu.
+ * Deciding on motion rather than time lets the window be generous (a
+ * one-handed two-finger tap is slow) without making scrolling feel laggy,
+ * and tolerates the holding finger drifting a little.  menutime still
+ * bounds a motionless rest so two fingers left sitting on the pad
+ * eventually count as a scroll.
+ */
+static int Tpgainx	= 1600;		/* full-width finger travel -> ~px */
+static int Tpgainy	= 900;		/* full-height (pad is wider than tall) */
+static int Scrollthresh	= 178956971;	/* ~2^31/12: pad height -> ~12 notches */
+static int Taptime	= 180000000;	/* ns: max touch duration for a tap */
+static int Taptravel	= 100000000;	/* ~5% of pad: max movement for a tap */
+static int Suppressframes = 3;		/* motion frames to drop after a press */
+static int Scrollstart	= 120000000;	/* ~5.6% of pad: motion => it's a scroll */
+static int Menuwindow	= 250000000;	/* ns: max still hold before it's a scroll */
 
 /* gesture engine state machine */
 enum {
@@ -1456,6 +1461,7 @@ ptpenable(Hiddev *f, Iface *iface)
 	if(sc.touchid >= 0){
 		f->ptp = 1;
 		f->touchid = sc.touchid;
+		havetpad = 1;		/* expose gesture tunables in ctl */
 	}
 
 	if(ptpsetmode(f) < 0)
@@ -1513,13 +1519,21 @@ Err:
 static void
 fsread(Req *r)
 {
-	char msg[128], *s, *e;
+	char msg[512], *s, *e;
 
 	s = msg;
 	e = msg+sizeof(msg);
 	*s = 0;
 	if(havekbd)
 		s = seprint(s, e, "repeat %d\ndelay %d\n", kbrepeat, kbdelay);
+	if(havetpad)
+		s = seprint(s, e,
+			"gainx %d\ngainy %d\nscroll %d\n"
+			"taptime %d\ntaptravel %d\nsuppress %d\n"
+			"scrollstart %d\nmenutime %d\n",
+			Tpgainx, Tpgainy, Scrollthresh,
+			Taptime, Taptravel, Suppressframes,
+			Scrollstart, Menuwindow);
 	USED(s);
 	readstr(r, msg);
 	respond(r, nil);
@@ -1554,6 +1568,22 @@ fswrite(Req *r)
 			kbdelay = atoi(f[1]);
 		else if(nf == 2 && strcmp(f[0], "debug") == 0)
 			debug = atoi(f[1]);
+		else if(nf == 2 && strcmp(f[0], "gainx") == 0)
+			Tpgainx = atoi(f[1]);
+		else if(nf == 2 && strcmp(f[0], "gainy") == 0)
+			Tpgainy = atoi(f[1]);
+		else if(nf == 2 && strcmp(f[0], "scroll") == 0)
+			Scrollthresh = atoi(f[1]);
+		else if(nf == 2 && strcmp(f[0], "taptime") == 0)
+			Taptime = atoi(f[1]);
+		else if(nf == 2 && strcmp(f[0], "taptravel") == 0)
+			Taptravel = atoi(f[1]);
+		else if(nf == 2 && strcmp(f[0], "suppress") == 0)
+			Suppressframes = atoi(f[1]);
+		else if(nf == 2 && strcmp(f[0], "scrollstart") == 0)
+			Scrollstart = atoi(f[1]);
+		else if(nf == 2 && strcmp(f[0], "menutime") == 0)
+			Menuwindow = atoi(f[1]);
 		else{
 			respond(r, "invalid ctl message");
 			return;
