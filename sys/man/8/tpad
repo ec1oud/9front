@@ -1,0 +1,56 @@
+.TH TPAD 8
+.SH NAME
+aux/tpad \- PS/2 Synaptics touchpad gestures
+.SH SYNOPSIS
+.B aux/tpad
+[
+.B -d
+]
+.SH DESCRIPTION
+.I Tpad
+drives a PS/2 Synaptics touchpad from userspace, adding multi-finger
+gestures the kernel mouse driver does not provide.
+.PP
+It writes
+.B synaptic
+to
+.B /dev/mousectl
+to put the pad into absolute mode, then reads the raw packets from
+.B /dev/touchpadraw
+(see
+.IR mouse (3)),
+decodes them, and drives the cursor by writing mouse events to
+.BR /dev/mousein .
+While
+.I tpad
+holds
+.B touchpadraw
+open the kernel stops decoding the packets itself, so
+.I tpad
+has sole control of the pad; a muxed trackpoint is passed through as
+relative motion.
+.PP
+The gestures are the same as for a USB precision touchpad; see
+.IR nusb (4):
+one finger moves the pointer, two fingers scroll, a quick tap or a
+physical click is button 1, and holding one finger while tapping a second
+or a second and third arms the right or middle menu button until the
+holding finger lifts.
+Basic PS/2 Synaptics reports only one finger's position plus a count, so
+the menu gestures work from the finger count while two-finger tracking is
+limited.
+.PP
+The
+.B -d
+flag traces decoded packets to standard error.
+.SH SOURCE
+.B /sys/src/cmd/aux/tpad.c
+.SH "SEE ALSO"
+.IR mouse (3),
+.IR mouse (8),
+.IR nusb (4)
+.SH BUGS
+The coordinate range and pressure thresholds are fixed nominal values
+rather than queried from the device, and the second finger's position is
+not decoded, so only the finger count distinguishes two- from three-finger
+gestures.

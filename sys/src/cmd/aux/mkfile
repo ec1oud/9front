@@ -43,6 +43,7 @@ TARG=\
 	stub\
 	tablet\
 	timesync\
+	tpad\
 	trampoline\
 	txt2uimage\
 	unbflz\
