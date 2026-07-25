@@ -9,6 +9,7 @@ mouse, cursor \- kernel mouse interface
 .B /dev/mousein
 .B /dev/mousectl
 .B /dev/cursor
+.B /dev/touchpadraw
 .fi
 .SH DESCRIPTION
 The
@@ -231,10 +232,25 @@ for details.
 .PP
 To cope with pointing devices with only two buttons, when the
 shift key is pressed, the right mouse button generates middle-button events.
+.PP
+The
+.B touchpadraw
+file returns the raw, framed device packets of a touchpad that reports
+them (currently a PS/2 Synaptics touchpad switched into absolute mode with
+the
+.B synaptic
+.B mousectl
+message).
+While it is open the kernel diverts the packets to the reader instead of
+decoding them itself, so a userspace driver such as
+.IR tpad (8)
+can interpret multi-finger data the kernel does not.
+Only one reader is allowed, and only the host owner may open it.
 .SH SOURCE
 .B /sys/src/9/port/devmouse.c
 .SH "SEE ALSO
-.IR rio (4)
+.IR rio (4),
+.IR tpad (8)
 .SH BUGS
 The cursor format is big endian while the
 rest of the graphics interface is little endian.

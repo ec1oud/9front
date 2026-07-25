@@ -240,6 +240,20 @@ synmouseputc(int c, int shift)
 
 	nb = 0;
 
+	/*
+	 * hand the framed raw packet to a reader of #m/touchpadraw; if one is
+	 * attached it owns the decode, so we skip ours.
+	 */
+	{
+		uchar raw[8];
+		int k;
+
+		for(k = 0; k < packetsize && k < nelem(raw); k++)
+			raw[k] = msg[k];
+		if(mouserawputc(raw, k))
+			return;
+	}
+
 	w = (msg[3]&0x4) >> 2;
 	w |= (msg[0]&0x4) >> 1;
 	w |= (msg[0]&0x30) >> 2;

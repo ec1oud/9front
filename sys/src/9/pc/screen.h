@@ -3,6 +3,7 @@ typedef struct Cursor Cursor;
 extern Cursor cursor;
 extern void mousetrack(int, int, int, ulong);
 extern void absmousetrack(int, int, int, ulong);
+extern int mouserawputc(void*, int);
 extern Point mousexy(void);
 
 extern void mouseaccelerate(int);

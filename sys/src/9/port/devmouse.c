@@ -82,6 +82,7 @@ enum{
 	Qmouse,
 	Qmousein,
 	Qmousectl,
+	Qtouchpadraw,
 };
 
 static Dirtab mousedir[]={
@@ -90,7 +91,17 @@ static Dirtab mousedir[]={
 	"mouse",	{Qmouse},	0,			0666,
 	"mousein",	{Qmousein},	0,			0660,
 	"mousectl",	{Qmousectl},	0,			0220,
+	"touchpadraw",	{Qtouchpadraw},	0,			0440,
 };
+
+/*
+ * Raw touchpad packets, tapped before the arch mouse driver decodes them
+ * (see mouserawputc).  A userspace daemon reads #m/touchpadraw, decodes the
+ * device-specific packet, and feeds mouse events back via /dev/mousein.
+ */
+static Queue*	mouserawq;
+static Ref	mouserawref;	/* single-reader guard */
+static int	mouserawon;	/* a reader is attached */
 
 static uchar buttonmap[8] = {
 	0, 1, 2, 3, 4, 5, 6, 7,
@@ -138,6 +149,7 @@ mouseinit(void)
 	if(!conf.monitor)
 		return;
 	mousetime = seconds();
+	mouserawq = qopen(4096, Qmsg, 0, 0);
 	Cursortocursor(&arrow);
 	kproc("mouse", mouseproc, 0);
 }
@@ -193,6 +205,17 @@ mouseopen(Chan *c, int omode)
 		/* wet floor */
 	case Qcursor:
 		incref(&mouse);
+		break;
+	case Qtouchpadraw:
+		if(!iseve())
+			error(Eperm);
+		if(mouserawq == nil)
+			error(Egreg);
+		if(incref(&mouserawref) != 1){
+			decref(&mouserawref);
+			error(Einuse);
+		}
+		mouserawon = 1;
 	}
 	c->mode = mode;
 	c->flag |= COPEN;
@@ -206,6 +229,10 @@ mouseclose(Chan *c)
 	if((c->qid.type&QTDIR)!=0 || (c->flag&COPEN)==0)
 		return;
 	switch((ulong)c->qid.path){
+	case Qtouchpadraw:
+		mouserawon = 0;
+		decref(&mouserawref);
+		return;
 	case Qmousein:
 		ilock(&mouse);
 		mouse.inbuttons &= ~((Mousestate*)c->aux)->buttons;
@@ -257,6 +284,9 @@ mouseread(Chan *c, void *va, long n, vlong off)
 		memmove(p+8, curs.clr, 2*16);
 		memmove(p+40, curs.set, 2*16);
 		return n;
+
+	case Qtouchpadraw:
+		return qread(mouserawq, va, n);
 
 	case Qmouse:
 		while(!mousechanged(nil)){
@@ -498,6 +528,21 @@ mousewrite(Chan *c, void *va, long n, vlong)
 	}
 
 	error(Egreg);
+}
+
+/*
+ * Feed a raw touchpad packet to a reader of #m/touchpadraw.  Called from the
+ * arch mouse driver's packet handler (e.g. interrupt context).  Returns
+ * non-zero when a reader is attached, telling the caller to skip its own
+ * decode so the userspace daemon has sole control.
+ */
+int
+mouserawputc(void *p, int n)
+{
+	if(!mouserawon || mouserawq == nil)
+		return 0;
+	qproduce(mouserawq, p, n);
+	return 1;
 }
 
 Dev mousedevtab = {
