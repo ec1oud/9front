@@ -25,6 +25,7 @@ enum {
 
 	/* protocols for SET_REPORT request */
 	Reportout = 0x0200,
+	Reportfeat = 0x0300,
 };
 
 /*

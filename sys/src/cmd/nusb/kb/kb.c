@@ -43,6 +43,12 @@ struct Hiddev
 
 	Channel	*repeatc;	/* only for keyboard */
 
+	int	ptp;		/* windows precision touchpad */
+	int	touchid;	/* report id of its multitouch input report */
+	int	modeid;		/* feature report id selecting Device Mode */
+	int	ifaceid;	/* interface number (to re-assert the mode) */
+	vlong	modetime;	/* last time we (re)asserted multitouch mode */
+
 	/* report descriptor */
 	int	nrep;
 
@@ -61,6 +67,7 @@ struct Hidslot
 	int	usage;
 	int	id;
 	int	oor;
+	int	tip;	/* digitizer tip switch (touching) */
 
 	int	abs;	/* for xyz */
 
@@ -79,6 +86,8 @@ struct Hidreport
 {
 	int	ns;
 	Hidslot	s[16];
+
+	int	b;	/* report-level (device) button state */
 
 	int	nk;
 	ushort	k[Nkey];
@@ -555,7 +564,7 @@ hidparse(int t, int f, int g[], int l[], int, void *a)
 		if(!s->valid || s->usage != l[Usage])
 			return;
 		/* if out of range or touchscreen finger not touching, ignore the slot */
-		if(s->oor || s->usage == 0x0D0022 && s->b == 0)
+		if(s->oor || s->usage == 0x0D0022 && s->tip == 0)
 			s->valid = 0;
 		return;
 	default:
@@ -609,8 +618,11 @@ hidparse(int t, int f, int g[], int l[], int, void *a)
 		Button:
 			s->m |= m;
 			s->b &= ~m;
-			if(v != 0)
+			p->b &= ~m;
+			if(v != 0){
 				s->b |= m;
+				p->b |= m;
+			}
 			break;
 
 		case 0x0D0032:	/* In Range */
@@ -618,8 +630,8 @@ hidparse(int t, int f, int g[], int l[], int, void *a)
 			break;
 
 		case 0x0D0042:	/* Tip Switch */
-			m = 1;
-			goto Button;
+			s->tip = (v != 0);
+			break;
 		case 0x0D0044:	/* Barrel Switch */
 			m = 2;
 			goto Button;
@@ -687,6 +699,174 @@ keykey(ushort *a, ushort k, int n)
 	return nil;
 }
 
+static int ptpsetmode(Hiddev *f);
+
+/*
+ * Touchpad gesture engine.
+ *
+ * A Touch is one frame of touchpad state: the currently-touching contacts
+ * (normalised 0..2^31 coordinates, treated as unsigned) and the physical
+ * clickpad button.  gesture() turns a stream of frames into mouse(3) events:
+ * one finger drives the cursor relatively, two fingers scroll (wheel), and
+ * the physical button is button 1.  All state lives in Gesture so the same
+ * engine can later be driven from the PS/2 Synaptics decoder.
+ */
+enum {
+	Tpgainx		= 1600,		/* full-width finger travel -> ~px */
+	Tpgainy		= 900,		/* full-height (pad is wider than tall) */
+	Scrollthresh	= 178956971,	/* ~2^31/12: pad height -> ~12 notches */
+	Maxcontacts	= 8,
+
+	Taptime		= 180000000,	/* ns: max touch duration for a tap */
+	Taptravel	= 100000000,	/* ~5% of pad: max movement for a tap */
+	Suppressframes	= 3,		/* motion frames to drop after a press */
+};
+
+typedef struct Touch Touch;
+typedef struct Gesture Gesture;
+
+struct Touch
+{
+	int	n;			/* number of contacts touching */
+	int	id[Maxcontacts];
+	int	x[Maxcontacts];
+	int	y[Maxcontacts];
+	int	button;			/* physical clickpad button down */
+};
+
+struct Gesture
+{
+	int	haveprev;
+	int	n;			/* previous contact count */
+	int	px, py;			/* previous primary-contact position */
+	vlong	sacc;			/* two-finger scroll accumulator */
+	int	lastb;
+
+	/* single-finger tap detection */
+	vlong	downtime;		/* when the finger first touched */
+	int	downx, downy;		/* position at touch-down */
+	int	moved;			/* moved too far (or pressed) to be a tap */
+
+	int	hwb;			/* previous physical-button state */
+	int	suppress;		/* motion frames left to drop after a press */
+};
+
+static void
+emitmouse(int fd, int x, int y, int b)
+{
+	char buf[80];
+
+	seprint(buf, buf+sizeof(buf), "m%11d %11d %11d", x, y, b);
+	write(fd, buf, strlen(buf));
+}
+
+static void
+gesture(Gesture *g, Touch *t, int fd)
+{
+	int i, prim, b, dx, dy, press;
+	vlong d, now;
+
+	now = nsec();
+	b = t->button ? 1 : 0;
+	press = b && !g->hwb;		/* physical button just went down */
+	g->hwb = b;
+	if(press){
+		g->suppress = Suppressframes;
+		g->moved = 1;		/* a real click is never a tap */
+	}
+
+	if(t->n == 0){
+		/* all fingers up */
+		if(g->n == 1 && !g->moved && !g->lastb
+		&& now - g->downtime < Taptime){
+			/* clickfinger: a quick, still, one-finger touch = click */
+			emitmouse(fd, 0, 0, 1);
+			emitmouse(fd, 0, 0, 0);
+		}
+		if(b != g->lastb)		/* release a held physical button */
+			emitmouse(fd, 0, 0, b);
+		g->lastb = b;
+		g->n = 0;
+		g->haveprev = 0;
+		g->sacc = 0;
+		return;
+	}
+
+	/* primary contact = lowest contact id */
+	prim = 0;
+	for(i = 1; i < t->n; i++)
+		if(t->id[i] < t->id[prim])
+			prim = i;
+
+	if(t->n >= 2){
+		/* two-finger scroll: track primary y, no cursor motion */
+		if(g->haveprev && g->n == t->n){
+			g->sacc += (vlong)(uint)t->y[prim] - (vlong)(uint)g->py;
+			while(g->sacc >= Scrollthresh){
+				emitmouse(fd, 0, 0, b|16);
+				emitmouse(fd, 0, 0, b);
+				g->sacc -= Scrollthresh;
+			}
+			while(g->sacc <= -Scrollthresh){
+				emitmouse(fd, 0, 0, b|8);
+				emitmouse(fd, 0, 0, b);
+				g->sacc += Scrollthresh;
+			}
+		} else
+			g->sacc = 0;
+		g->px = t->x[prim];
+		g->py = t->y[prim];
+		g->n = t->n;
+		g->haveprev = 1;
+		g->lastb = b;
+		g->moved = 1;			/* multi-finger is never a tap */
+		return;
+	}
+
+	/* single finger */
+	if(g->n != 1){
+		/* finger just arrived: start a fresh touch */
+		g->downtime = now;
+		g->downx = t->x[prim];
+		g->downy = t->y[prim];
+		/* only a touch that began as a lone finger can be a tap */
+		g->moved = (g->n != 0) || press;
+		dx = dy = 0;
+	} else {
+		d = (vlong)(uint)t->x[prim] - (vlong)(uint)g->px;
+		dx = (d * Tpgainx) >> 31;
+		d = (vlong)(uint)t->y[prim] - (vlong)(uint)g->py;
+		dy = (d * Tpgainy) >> 31;
+
+		/* moved too far from the touch-down point to still be a tap? */
+		d = (vlong)(uint)t->x[prim] - (vlong)(uint)g->downx;
+		if(d < 0)
+			d = -d;
+		if(d > Taptravel)
+			g->moved = 1;
+		d = (vlong)(uint)t->y[prim] - (vlong)(uint)g->downy;
+		if(d < 0)
+			d = -d;
+		if(d > Taptravel)
+			g->moved = 1;
+	}
+
+	/* drop the small cursor jump the finger makes while pressing */
+	if(g->suppress > 0){
+		g->suppress--;
+		dx = dy = 0;
+	}
+
+	g->px = t->x[prim];
+	g->py = t->y[prim];
+	g->n = 1;
+	g->haveprev = 1;
+
+	if(dx != 0 || dy != 0 || b != g->lastb)
+		emitmouse(fd, dx, dy, b);
+	g->lastb = b;
+}
+
 static void
 readerproc(void* a)
 {
@@ -696,6 +876,7 @@ readerproc(void* a)
 	int	abs, x, y, z, b;
 	Hidreport p;
 	Hidslot lasts[nelem(p.s)], *s, *l;
+	Gesture gst;
 	Hiddev *f = a;
 
 	threadsetname("readerproc %s", f->ep->dir);
@@ -703,6 +884,7 @@ readerproc(void* a)
 
 	memset(&p, 0, sizeof(p));
 	memset(lasts, 0, sizeof(lasts));
+	memset(&gst, 0, sizeof(gst));
 	lastb = nlastk = 0;
 
 	for(;;){
@@ -730,6 +912,7 @@ readerproc(void* a)
 		p.o = 0;
 		p.e = p.p + c;
 		p.ns = 0;
+		p.b = 0;
 		memset(p.s, 0, sizeof(p.s[0]));
 		repparse(f->rep, f->rep+f->nrep, hidparse, &p);
 		if(p.s[p.ns].valid)
@@ -788,6 +971,59 @@ readerproc(void* a)
 			p.nk = 0;
 		}
 
+		/* precision touchpad: run the gesture engine on its multitouch report */
+		if(f->ptp && c > 0 && (uchar)p.p[0] == f->touchid){
+			Touch t;
+
+			memset(&t, 0, sizeof t);
+			t.button = p.b & 1;
+			for(i = 0; i < p.ns && t.n < Maxcontacts; i++){
+				s = &p.s[i];
+				/*
+				 * a contact is a slot with absolute X/Y and its
+				 * tip down; we're already inside the multi-finger
+				 * report so no need to match the collection usage
+				 * (which repparse leaves as the page only).
+				 */
+				if(s->valid && (s->abs & 3) == 3 && s->tip){
+					t.id[t.n] = s->id;
+					t.x[t.n] = s->x;
+					t.y[t.n] = s->y;
+					t.n++;
+				}
+			}
+			if(debug > 1){
+				fprint(2, "touch: n=%d b=%d", t.n, t.button);
+				for(i = 0; i < t.n; i++)
+					fprint(2, " [%d %d,%d]", t.id[i], t.x[i], t.y[i]);
+				fprint(2, "\n");
+			}
+			if(f->minfd < 0){
+				f->minfd = open("/dev/mousein", OWRITE);
+				if(f->minfd < 0)
+					hdfatal(f, "open /dev/mousein");
+			}
+			gesture(&gst, &t, f->minfd);
+			continue;
+		}
+
+		/*
+		 * a precision touchpad sending a non-touch (legacy mouse)
+		 * report has fallen back to mouse mode -- e.g. it wasn't
+		 * ready when we set it at startup, or it reset on resume.
+		 * Re-assert multitouch (throttled), and let this report fall
+		 * through to the generic path so the pointer still works.
+		 */
+		if(f->ptp && c > 0 && (uchar)p.p[0] != f->touchid){
+			vlong now;
+
+			now = nsec();
+			if(now - f->modetime > 500000000){
+				ptpsetmode(f);
+				f->modetime = now;
+			}
+		}
+
 		/* handle mouse/touchpad */
 		if(p.ns == 0)
 			continue;
@@ -828,6 +1064,12 @@ readerproc(void* a)
 			if(s->b & 2)
 				b |= 4;
 			bpress |= s->m;
+
+			/* digitizer tip (stylus/touchscreen) acts as button 1 */
+			if(s->tip){
+				b |= 1;
+				bpress |= 1;
+			}
 
 			/* X/Y are absolute? */
 			if((s->abs & 3) == 3){
@@ -960,6 +1202,90 @@ quirks(Hiddev *f)
 	}
 }
 
+/*
+ * Windows Precision Touchpad devices power up in a legacy single-pointer
+ * "mouse" mode (report id 2) and only emit their multi-finger digitizer
+ * reports after the host writes the Device Mode feature (Digitizer usage
+ * 0x0D0052) with value 3.  Scan the report descriptor for that feature and,
+ * if present, switch the device into multitouch mode.  Devices without the
+ * feature (ordinary mice, keyboards, tablets) are left untouched.
+ */
+enum {
+	UsgInputMode	= 0x0D0052,	/* Digitizer: Device/Input Mode (feature) */
+	UsgTipSwitch	= 0x0D0042,	/* Digitizer: Tip Switch (per-finger input) */
+	MTmultitouch	= 3,		/* value that selects multitouch */
+};
+
+typedef struct Ptpscan Ptpscan;
+struct Ptpscan
+{
+	int	modeid;		/* feature report holding Device Mode */
+	int	touchid;	/* input report carrying finger contacts */
+};
+
+static void
+ptpscan(int t, int, int g[], int l[], int, void *a)
+{
+	Ptpscan *sc = a;
+
+	/*
+	 * Tip Switch is an input field present only in the multi-finger
+	 * report; the Finger usage (0x0D0022) is a collection, not a field,
+	 * so it must not be used to identify the report.
+	 */
+	if(t == Feature && l[Usage] == UsgInputMode)
+		sc->modeid = g[RepId];
+	else if(t == Input && l[Usage] == UsgTipSwitch)
+		sc->touchid = g[RepId];
+}
+
+/*
+ * numbered feature report: the report id is carried both in the low byte
+ * of wValue and as the first byte of the payload.
+ */
+static int
+ptpsetmode(Hiddev *f)
+{
+	uchar buf[2];
+
+	buf[0] = f->modeid;
+	buf[1] = MTmultitouch;
+	return usbcmd(f->dev, Rh2d|Rclass|Riface, Setreport, Reportfeat|f->modeid,
+		f->ifaceid, buf, sizeof(buf));
+}
+
+static void
+ptpenable(Hiddev *f, Iface *iface)
+{
+	Ptpscan sc;
+
+	sc.modeid = -1;
+	sc.touchid = -1;
+	repparse(f->rep, f->rep+f->nrep, ptpscan, &sc);
+	if(sc.modeid < 0)
+		return;			/* not a precision touchpad */
+
+	f->modeid = sc.modeid;
+	f->ifaceid = iface->id;
+
+	/*
+	 * route to the gesture engine only if we identified the multi-finger
+	 * report; otherwise leave it to the generic combine path.  Set this
+	 * from the descriptor scan (not the mode-set result) so readerproc can
+	 * re-assert the mode if this first attempt doesn't take at boot.
+	 */
+	if(sc.touchid >= 0){
+		f->ptp = 1;
+		f->touchid = sc.touchid;
+	}
+
+	if(ptpsetmode(f) < 0)
+		fprint(2, "%s: %s: ptp: set device mode: %r\n", argv0, f->dev->dir);
+	else if(debug)
+		fprint(2, "%s: %s: ptp: multitouch enabled (mode id %d, touch id %d)\n",
+			argv0, f->dev->dir, sc.modeid, sc.touchid);
+}
+
 static int
 hdsetup(Dev *d, Ep *ep)
 {
@@ -997,6 +1323,7 @@ hdsetup(Dev *d, Ep *ep)
 		goto Err;
 	}
 	quirks(f);
+	ptpenable(f, ep->iface);
 	procrfork(readerproc, f, Stack, RFNOTEG);
 	return 0;
 Err:
@@ -1007,14 +1334,14 @@ Err:
 static void
 fsread(Req *r)
 {
-	char msg[48], *s, *e;
+	char msg[128], *s, *e;
 
 	s = msg;
 	e = msg+sizeof(msg);
 	*s = 0;
 	if(havekbd)
-		e = seprint(s, e, "repeat %d\ndelay %d\n", kbrepeat, kbdelay);
-	USED(e);
+		s = seprint(s, e, "repeat %d\ndelay %d\n", kbrepeat, kbdelay);
+	USED(s);
 	readstr(r, msg);
 	respond(r, nil);
 }
