@@ -1,0 +1,10 @@
+</$objtype/mkfile
+
+LIB=/$objtype/lib/libtouch.a
+
+OFILES=\
+	gesture.$O\
+
+HFILES=/sys/include/touch.h
+
+</sys/src/cmd/mksyslib
