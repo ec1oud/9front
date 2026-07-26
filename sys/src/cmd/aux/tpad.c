@@ -24,22 +24,48 @@
 
 enum {
 	Pktlen	= 6,
-
-	/* nominal Synaptics absolute coordinate range (pad edges) */
-	Xmin	= 1472,
-	Xmax	= 5472,
-	Ymin	= 1408,
-	Ymax	= 4448,
-
-	Zmin	= 40,		/* pressure below this: no finger */
-	Wpalm	= 6,		/* width at/above this: palm, ignore */
 };
+
+/* nominal Synaptics absolute coordinate range (pad edges) and thresholds */
+static int Xmin = 1472;
+static int Xmax = 5472;
+static int Ymin = 1408;
+static int Ymax = 4448;
+static int Zmin = 40;		/* pressure below this: no finger */
+static int Wpalm = 6;		/* width at/above this: palm, ignore */
 
 /* trackpoint L/R/M button bits -> mouse(3) button mask */
 static uchar tpbtn[8] = { 0, 1, 4, 5, 2, 3, 6, 7 };
 
 static int mousefd;
 static int debug;
+
+/*
+ * Runtime knobs, settable with -D name=value.  The first block lives in
+ * libtouch (shared with nusb/kb); the rest are this driver's Synaptics
+ * decode.  tpad restarts cheaply, so re-run it with new values to tune.
+ */
+static struct {
+	char	*name;
+	int	*p;
+} tunables[] = {
+	"gainx",	&Tpgainx,
+	"gainy",	&Tpgainy,
+	"scroll",	&Scrollthresh,
+	"taptime",	&Taptime,
+	"taptravel",	&Taptravel,
+	"suppress",	&Suppressframes,
+	"scrollstart",	&Scrollstart,
+	"menutime",	&Menuwindow,
+	"jump",		&Jumpthresh,
+	"tapclick",	&Tapclick,
+	"xmin",		&Xmin,
+	"xmax",		&Xmax,
+	"ymin",		&Ymin,
+	"ymax",		&Ymax,
+	"zmin",		&Zmin,
+	"wpalm",	&Wpalm,
+};
 
 static int
 norm(int v, int lo, int hi)
@@ -74,10 +100,37 @@ trackpoint(uchar *b)
 	write(mousefd, buf, strlen(buf));
 }
 
+static void
+settunable(char *s)
+{
+	char *v;
+	int i;
+
+	if((v = strchr(s, '=')) == nil)
+		usage();
+	*v++ = 0;
+	for(i = 0; i < nelem(tunables); i++)
+		if(strcmp(tunables[i].name, s) == 0){
+			*tunables[i].p = atoi(v);
+			return;
+		}
+	fprint(2, "%s: unknown tunable %q\n", argv0, s);
+	usage();
+}
+
+static void
+printtunables(void)
+{
+	int i;
+
+	for(i = 0; i < nelem(tunables); i++)
+		print("%s %d\n", tunables[i].name, *tunables[i].p);
+}
+
 void
 usage(void)
 {
-	fprint(2, "usage: %s [-d]\n", argv0);
+	fprint(2, "usage: %s [-dp] [-D name=value] ...\n", argv0);
 	exits("usage");
 }
 
@@ -93,6 +146,12 @@ main(int argc, char **argv)
 	case 'd':
 		debug++;
 		break;
+	case 'D':
+		settunable(EARGF(usage()));
+		break;
+	case 'p':
+		printtunables();
+		exits(nil);
 	default:
 		usage();
 	}ARGEND;

@@ -4,8 +4,13 @@ aux/tpad \- PS/2 Synaptics touchpad gestures
 .SH SYNOPSIS
 .B aux/tpad
 [
-.B -d
+.B -dp
 ]
+[
+.B -D
+.I name=value
+]
+...
 .SH DESCRIPTION
 .I Tpad
 drives a PS/2 Synaptics touchpad from userspace, adding multi-finger
@@ -41,17 +46,52 @@ relative motion.
 .PP
 The gestures are the same as for a USB precision touchpad; see
 .IR nusb (4):
-one finger moves the pointer, two fingers scroll, a quick tap or a
-physical click is button 1, and holding one finger while tapping a second
-or a second and third arms the right or middle menu button until the
-holding finger lifts.
+one finger moves the pointer, two fingers scroll, and a physical click is
+button 1.
+A physical click with two or three fingers, or a light tap of a second or
+a second and third finger while one finger rests, is instead the right or
+middle menu button; it stays held while a finger remains on the pad, so
+sliding to a menu item and lifting selects it.
 Basic PS/2 Synaptics reports only one finger's position plus a count, so
 the menu gestures work from the finger count while two-finger tracking is
 limited.
 .PP
 The
 .B -d
-flag traces decoded packets to standard error.
+flag traces decoded packets, with their raw bytes, to standard error.
+.B -p
+prints the current tunables (as
+.I name value
+pairs) and exits.
+.B -D
+.I name=value
+sets a tunable; it may be repeated.
+The knobs are the gesture-engine ones shared with
+.IR nusb (4)
+.RB ( gainx ,
+.BR gainy ,
+.BR scroll ,
+.BR taptime ,
+.BR taptravel ,
+.BR suppress ,
+.BR scrollstart ,
+.BR menutime ,
+.BR jump ,
+and
+.B tapclick
+to disable tap-to-click), plus this driver's Synaptics decode
+.RB ( xmin ,
+.BR xmax ,
+.BR ymin ,
+.BR ymax
+for the coordinate range,
+.B zmin
+pressure floor, and
+.B wpalm
+palm-width cutoff).
+Since
+.I tpad
+restarts cheaply, re-run it with new values to tune by feel.
 .SH SOURCE
 .B /sys/src/cmd/aux/tpad.c
 .SH "SEE ALSO"
