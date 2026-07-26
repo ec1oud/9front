@@ -27,6 +27,7 @@ int Suppressframes = 3;		/* motion frames to drop after a press */
 int Scrollstart	= 120000000;	/* ~5.6% of pad: motion => it's a scroll */
 int Menuwindow	= 250000000;	/* ns: max still hold before it's a scroll */
 int Jumpthresh	= 700000000;	/* ~33% of pad in one frame: a teleport, not motion */
+int Tapclick	= 1;		/* nonzero: a quick still touch is a button-1 click */
 
 /* gesture engine state machine */
 enum {
@@ -87,10 +88,20 @@ premove(Gesture *g, int x, int y, int *dx, int *dy)
 	if(ex > Jumpthresh || ex < -Jumpthresh
 	|| ey > Jumpthresh || ey < -Jumpthresh){
 		*dx = *dy = 0;
+		g->gaccx = g->gaccy = 0;	/* discontinuity: drop residual too */
 		return;
 	}
-	*dx = (ex * Tpgainx) >> 31;
-	*dy = (ey * Tpgainy) >> 31;
+	/*
+	 * Accumulate sub-pixel motion so a slow drag stays smooth and, more
+	 * importantly, so the zero-mean jitter of a "still" finger averages
+	 * out to no cursor movement instead of rounding to +-1px every frame.
+	 */
+	g->gaccx += ex * Tpgainx;
+	g->gaccy += ey * Tpgainy;
+	*dx = g->gaccx >> 31;
+	*dy = g->gaccy >> 31;
+	g->gaccx -= (vlong)*dx << 31;
+	g->gaccy -= (vlong)*dy << 31;
 }
 
 /*
@@ -122,7 +133,7 @@ gesture(Gesture *g, Touch *t, int fd)
 		/* all fingers up: finish whatever gesture was in progress */
 		if(g->menub){
 			emitmouse(fd, 0, 0, 0);		/* release held menu button */
-		} else if(g->mode == Gcursor && !g->moved && !g->lastb
+		} else if(Tapclick && g->mode == Gcursor && !g->moved && !g->lastb
 		      && now - g->downtime < Taptime){
 			/* clickfinger: a quick, still, one-finger touch = click */
 			emitmouse(fd, 0, 0, 1);
@@ -143,26 +154,36 @@ gesture(Gesture *g, Touch *t, int fd)
 		g->primid = t->id[prim];
 		g->px = t->x[prim];
 		g->py = t->y[prim];
+		g->gaccx = g->gaccy = 0;
 		g->downtime = now;
 		g->downx = t->x[prim];
 		g->downy = t->y[prim];
 		g->moved = 0;
+		g->peakn = 0;
 		g->mode = Gcursor;
 	}
+	if(t->n > g->peakn)
+		g->peakn = t->n;		/* most fingers seen this touch */
 
 	/* track the primary finger across frames by its contact id */
 	prim = findid(t, g->primid);
 	if(prim < 0){
-		/* primary lifted but other fingers remain: re-latch a primary */
-		if(g->menub){
-			emitmouse(fd, 0, 0, 0);
-			g->menub = 0;
-		}
+		/* the primary lifted but other fingers remain: re-latch onto one */
 		prim = findprim(t);
 		g->primid = t->id[prim];
 		g->px = t->x[prim];
 		g->py = t->y[prim];
 		g->moved = 1;			/* not a clean single-finger tap */
+		if(g->menub){
+			/*
+			 * a held menu stays open while ANY finger is down and is
+			 * driven by whichever remains, so lifting the extra
+			 * fingers of the arming click doesn't close it -- only
+			 * lifting the last finger (all up) selects.
+			 */
+			g->lastb = b;
+			return;			/* stay in Gmenu */
+		}
 		if(t->n >= 2){
 			g->mode = Gpending;
 			g->pendtime = now;
@@ -188,7 +209,7 @@ gesture(Gesture *g, Touch *t, int fd)
 	 * stays button 1 (handled in the cursor path below).
 	 */
 	if(press && t->n >= 2 && g->menub == 0){
-		g->menub = t->n >= 3 ? 2 : 4;
+		g->menub = g->peakn >= 3 ? 2 : 4;
 		g->mode = Gmenu;
 		g->px = t->x[prim];
 		g->py = t->y[prim];

@@ -36,6 +36,7 @@ struct Gesture
 	int	mode;			/* internal state-machine phase */
 	int	primid;			/* contact id of the primary finger */
 	int	px, py;			/* previous primary-contact position */
+	vlong	gaccx, gaccy;		/* sub-pixel cursor-motion accumulators */
 	vlong	sacc;			/* two-finger scroll accumulator */
 	int	lastb;			/* last button state emitted */
 
@@ -49,6 +50,7 @@ struct Gesture
 	int	pendx, pendy;		/* primary position when they arrived */
 	int	nextra;			/* distinct non-primary fingers seen */
 	int	extraid[Maxcontacts];	/* their contact ids */
+	int	peakn;			/* most fingers seen this touch */
 	int	menub;			/* held menu button mask (2 or 4), or 0 */
 
 	int	hwb;			/* previous physical-button state */
@@ -62,5 +64,6 @@ struct Gesture
  */
 extern int Tpgainx, Tpgainy, Scrollthresh, Taptime, Taptravel;
 extern int Suppressframes, Scrollstart, Menuwindow, Jumpthresh;
+extern int Tapclick;		/* nonzero: a quick still touch is a button-1 click */
 
 void	gesture(Gesture *g, Touch *t, int fd);
