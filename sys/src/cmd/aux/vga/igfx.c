@@ -379,6 +379,7 @@ devtype(Igfx*igfx)
 	case 0x0a06:
 	case 0x3185:    /* UHD 600 - 9.5 Gen Core */
 	case 0x0412:	/* HD 4600 - 4th Gen Core */
+	case 0x0416:	/* HD 4600 - 4th Gen Core Mobile - ThinkPad T440p */
 	case 0x041a:	/* HD 4600 - Xeon E3-1200v3 Core */
 		return TypeHSW;
 	case 0x0166:	/* 3rd Gen Core - ThinkPad X230 */

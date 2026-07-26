@@ -78,6 +78,8 @@ igfxblank(VGAscr *scr, int blank)
 	case 0x0046:	/* ILK/ARD */
 	case 0x0126:	/* SNB */
 	case 0x0166:	/* IVB */
+	case 0x0412:	/* HSW */
+	case 0x0416:	/* HSW mobile - T440p */
 	case 0x0a16:	/* HSW */
 	case 0x1616:	/* BDW */
 		off = 0xC7204;
@@ -153,6 +155,7 @@ igfxcurregs(VGAscr* scr, int pipe)
 		return nil;
 	switch(scr->pci->did){
 	case 0x0412:	/* Haswell HD Graphics 4600 */
+	case 0x0416:	/* Haswell HD Graphics 4600 mobile - T440p */
 	case 0x0a16:	/* Haswell HD Graphics 4400 */
 	case 0x0a06:
 	case 0x1616:	/* Broadwell HD 5500 */
