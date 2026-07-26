@@ -40,14 +40,14 @@ usage(void)
 static uvlong
 findigfx(void)
 {
-	char path[64], buf[512], *p, *s;
+	char path[64], buf[512], *base, *p, *s;
 	int fd, i, ccrb, vid;
 	uvlong size;
 	Dir *d;
-	long n;
+	long n, r;
 
-	if((fd = open("/dev/pci", OREAD)) < 0)
-		if((fd = open("#$/pci", OREAD)) < 0)
+	if((fd = open(base = "/dev/pci", OREAD)) < 0)
+		if((fd = open(base = "#$/pci", OREAD)) < 0)
 			sysfatal("open /dev/pci: %r");
 	n = dirreadall(fd, &d);
 	close(fd);
@@ -59,14 +59,14 @@ findigfx(void)
 		p = d[i].name + strlen(d[i].name) - 3;
 		if(p < d[i].name || strcmp(p, "ctl") != 0)
 			continue;
-		snprint(path, sizeof path, "/dev/pci/%s", d[i].name);
+		snprint(path, sizeof path, "%s/%s", base, d[i].name);
 		if((fd = open(path, OREAD)) < 0)
 			continue;
-		n = read(fd, buf, sizeof buf - 1);
+		r = read(fd, buf, sizeof buf - 1);
 		close(fd);
-		if(n <= 0)
+		if(r <= 0)
 			continue;
-		buf[n] = 0;
+		buf[r] = 0;
 
 		/* "ccrb.ccru.ccrp vid/did intl [i:bar size]..." */
 		ccrb = strtol(buf, nil, 16);
