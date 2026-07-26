@@ -8,22 +8,28 @@
  * "igfxmmio" physical segment, so we can reach the registers from
  * userspace without any new kernel code.
  *
- * Ironlake through Broadwell (the T440p is Haswell) drive the panel
- * PWM from the PCH:
- *	BLC_PWM_PCH_CTL1 0xC8250  bit31 = PWM enable
- *	BLC_PWM_PCH_CTL2 0xC8254  bits 31:16 = period, 15:0 = duty
- * brightness = duty/period.  Other generations put the PWM elsewhere
- * (CPU side 0x48254, pre-gen5 0x61254); use -r to point at those.
+ * The PWM register holds the period in bits 31:16 and the duty cycle
+ * in bits 15:0; brightness = duty/period.  Which register drives the
+ * panel varies: PCH side on Ironlake..Broadwell, CPU side on some
+ * Haswell eDP panels (e.g. the ThinkPad T440p), and a legacy location
+ * pre-Ironlake.  We probe the candidates and pick the one that is
+ * actually running (nonzero period and, since the screen is lit,
+ * nonzero duty); -r overrides the choice.
  */
 
 enum {
-	PCHCTL2	= 0xC8254,	/* default: PCH backlight duty/period */
+	CPUCTL2	= 0x48254,	/* CPU-side backlight duty/period */
+	PCHCTL2	= 0xC8254,	/* PCH-side backlight duty/period */
+	OLDCTL2	= 0x61254,	/* pre-Ironlake backlight duty/period */
 	Minpct	= 1,		/* never let the screen go fully dark */
 };
 
+static ulong candidates[] = { CPUCTL2, PCHCTL2, OLDCTL2 };
+
 static u32int *mmio;
 static uvlong mmiosize;
-static ulong reg = PCHCTL2;
+static ulong reg;
+static int rset;
 
 static void
 usage(void)
@@ -100,6 +106,40 @@ wr(u32int v)
 	mmio[reg/4] = v;
 }
 
+/*
+ * Pick the PWM register that is actually driving the panel: since the
+ * screen is lit its duty cycle is nonzero.  Fall back to any register
+ * with a nonzero period so a fully-dimmed panel can still be raised.
+ */
+static void
+pickreg(void)
+{
+	int i;
+	u32int v;
+	ulong c;
+
+	for(i = 0; i < nelem(candidates); i++){
+		c = candidates[i];
+		if(c + 4 > mmiosize)
+			continue;
+		v = mmio[c/4];
+		if((v >> 16) != 0 && (v & 0xFFFF) != 0){
+			reg = c;
+			return;
+		}
+	}
+	for(i = 0; i < nelem(candidates); i++){
+		c = candidates[i];
+		if(c + 4 > mmiosize)
+			continue;
+		if((mmio[c/4] >> 16) != 0){
+			reg = c;
+			return;
+		}
+	}
+	sysfatal("no active backlight PWM register found; try -r");
+}
+
 void
 main(int argc, char **argv)
 {
@@ -109,6 +149,7 @@ main(int argc, char **argv)
 	ARGBEGIN{
 	case 'r':
 		reg = strtoul(EARGF(usage()), nil, 0);
+		rset = 1;
 		break;
 	default:
 		usage();
@@ -118,11 +159,14 @@ main(int argc, char **argv)
 		usage();
 
 	mmiosize = findigfx();
-	if(reg + 4 > mmiosize)
+	if(rset && reg + 4 > mmiosize)
 		sysfatal("register %#lux outside mmio (%#llux)", reg, mmiosize);
 	mmio = segattach(0, "igfxmmio", 0, mmiosize);
 	if(mmio == (u32int*)-1)
 		sysfatal("segattach igfxmmio: %r");
+
+	if(!rset)
+		pickreg();
 
 	v = rd();
 	period = v >> 16;

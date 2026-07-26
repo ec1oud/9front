@@ -41,18 +41,23 @@ fully dark; use the screen blanker
 .RI ( vga (8))
 to turn the backlight off.
 .PP
-By default the PCH backlight register
+The register holds the PWM period in bits 31:16 and the duty cycle in
+bits 15:0, and brightness is duty divided by period.
+Which register drives the panel varies: the PCH side at
 .B 0xC8254
-is used, which is correct from Ironlake through Broadwell (for example
-the Thinkpad T440p, a Haswell machine).
-Other generations place the PWM elsewhere \- CPU side at
-.BR 0x48254 ,
-pre-Ironlake at
+on Ironlake through Broadwell, the CPU side at
+.B 0x48254
+on some Haswell eDP panels such as the Thinkpad T440p, and a legacy
+location at
 .B 0x61254
-\- and can be selected with
-.BR -r .
-In every case the register holds the PWM period in bits 31:16 and the
-duty cycle in bits 15:0, and brightness is duty divided by period.
+before Ironlake.
+By default
+.I light
+probes these and uses the one that is actually running, that is with a
+nonzero period and, because the screen is lit, a nonzero duty cycle.
+The
+.B -r
+flag forces a particular register instead.
 .SH EXAMPLES
 Dim to half brightness:
 .IP
