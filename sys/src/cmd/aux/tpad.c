@@ -140,7 +140,12 @@ main(int argc, char **argv)
 			y |= 1<<12;
 
 		memset(&t, 0, sizeof t);
-		t.button = (b[0] & 3) ? 1 : 0;
+		/*
+		 * clickpad: the whole pad is one button, reported as the xor of
+		 * byte 0 and byte 3 bit 0 (not byte 0's L/R bits, which a
+		 * clickpad uses for other data).
+		 */
+		t.button = ((b[0] ^ b[3]) & 1) ? 1 : 0;
 		if(z >= Zmin && w < Wpalm){
 			/* finger count from w: 0 => 2 fingers, 1 => 3, else 1 */
 			t.n = w==0 ? 2 : (w==1 ? 3 : 1);
@@ -159,7 +164,9 @@ main(int argc, char **argv)
 			}
 		}
 		if(debug)
-			fprint(2, "w=%d z=%d x=%d y=%d n=%d b=%d\n",
+			fprint(2, "[%.2ux %.2ux %.2ux %.2ux %.2ux %.2ux] "
+				"w=%d z=%d x=%d y=%d n=%d b=%d\n",
+				b[0], b[1], b[2], b[3], b[4], b[5],
 				w, z, x, y, t.n, t.button);
 		gesture(&g, &t, mousefd);
 	}
