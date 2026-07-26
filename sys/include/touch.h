@@ -61,6 +61,6 @@ struct Gesture
  * span; time values are ns.
  */
 extern int Tpgainx, Tpgainy, Scrollthresh, Taptime, Taptravel;
-extern int Suppressframes, Scrollstart, Menuwindow;
+extern int Suppressframes, Scrollstart, Menuwindow, Jumpthresh;
 
 void	gesture(Gesture *g, Touch *t, int fd);

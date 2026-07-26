@@ -26,6 +26,7 @@ int Taptravel	= 100000000;	/* ~5% of pad: max movement for a tap */
 int Suppressframes = 3;		/* motion frames to drop after a press */
 int Scrollstart	= 120000000;	/* ~5.6% of pad: motion => it's a scroll */
 int Menuwindow	= 250000000;	/* ns: max still hold before it's a scroll */
+int Jumpthresh	= 700000000;	/* ~33% of pad in one frame: a teleport, not motion */
 
 /* gesture engine state machine */
 enum {
@@ -66,6 +67,30 @@ emitmouse(int fd, int x, int y, int b)
 
 	seprint(buf, buf+sizeof(buf), "m%11d %11d %11d", x, y, b);
 	write(fd, buf, strlen(buf));
+}
+
+/*
+ * Relative cursor motion from one primary-contact position to the next, with
+ * the pad's gains applied.  A per-frame jump larger than Jumpthresh is not
+ * real finger travel but a discontinuity -- a lift-and-retouch elsewhere (a
+ * bus like PS/2 Synaptics gives no per-finger ids, so this looks like one
+ * continuous touch) or the reported centroid leaping as fingers change.  Drop
+ * it so the cursor doesn't teleport; the caller still re-baselines px/py.
+ */
+static void
+premove(Gesture *g, int x, int y, int *dx, int *dy)
+{
+	vlong ex, ey;
+
+	ex = (vlong)(uint)x - (vlong)(uint)g->px;
+	ey = (vlong)(uint)y - (vlong)(uint)g->py;
+	if(ex > Jumpthresh || ex < -Jumpthresh
+	|| ey > Jumpthresh || ey < -Jumpthresh){
+		*dx = *dy = 0;
+		return;
+	}
+	*dx = (ex * Tpgainx) >> 31;
+	*dy = (ey * Tpgainy) >> 31;
 }
 
 /*
@@ -242,10 +267,7 @@ gesture(Gesture *g, Touch *t, int fd)
 
 	case Gmenu:
 		/* primary drags with the menu button held (ignore extra fingers) */
-		d = (vlong)(uint)t->x[prim] - (vlong)(uint)g->px;
-		dx = (d * Tpgainx) >> 31;
-		d = (vlong)(uint)t->y[prim] - (vlong)(uint)g->py;
-		dy = (d * Tpgainy) >> 31;
+		premove(g, t->x[prim], t->y[prim], &dx, &dy);
 		g->px = t->x[prim];
 		g->py = t->y[prim];
 		if(dx != 0 || dy != 0)
@@ -268,10 +290,7 @@ gesture(Gesture *g, Touch *t, int fd)
 		return;
 	}
 
-	d = (vlong)(uint)t->x[prim] - (vlong)(uint)g->px;
-	dx = (d * Tpgainx) >> 31;
-	d = (vlong)(uint)t->y[prim] - (vlong)(uint)g->py;
-	dy = (d * Tpgainy) >> 31;
+	premove(g, t->x[prim], t->y[prim], &dx, &dy);
 
 	/* moved too far from the touch-down point to still be a tap? */
 	d = (vlong)(uint)t->x[prim] - (vlong)(uint)g->downx;
