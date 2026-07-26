@@ -100,6 +100,8 @@ trackpoint(uchar *b)
 	write(mousefd, buf, strlen(buf));
 }
 
+void	usage(void);
+
 static void
 settunable(char *s)
 {
