@@ -26,13 +26,18 @@ enum {
 	Pktlen	= 6,
 };
 
-/* nominal Synaptics absolute coordinate range (pad edges) and thresholds */
-static int Xmin = 1472;
-static int Xmax = 5472;
-static int Ymin = 1408;
-static int Ymax = 4448;
+/*
+ * Synaptics absolute coordinate range (pad edges) and thresholds, measured
+ * on a Thinkpad T440p.  w is the contact width for a single finger (4..15
+ * here, wider near the edges); only w 0/1 mean 2/3 fingers, so the palm
+ * cutoff is near the top of the range, not in the middle.
+ */
+static int Xmin = 1450;
+static int Xmax = 5650;
+static int Ymin = 1210;
+static int Ymax = 4680;
 static int Zmin = 40;		/* pressure below this: no finger */
-static int Wpalm = 6;		/* width at/above this: palm, ignore */
+static int Wpalm = 15;		/* width at/above this: palm, ignore */
 
 /* trackpoint L/R/M button bits -> mouse(3) button mask */
 static uchar tpbtn[8] = { 0, 1, 4, 5, 2, 3, 6, 7 };
