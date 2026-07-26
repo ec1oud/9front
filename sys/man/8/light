@@ -1,0 +1,85 @@
+.TH LIGHT 8
+.SH NAME
+aux/light \- adjust the LCD backlight on Intel graphics
+.SH SYNOPSIS
+.B aux/light
+[
+.B -r
+.I reg
+]
+[
+.RB [ + | - ] percent
+]
+.SH DESCRIPTION
+.I Light
+reads or sets the LCD backlight brightness on machines with Intel
+integrated graphics by writing the panel backlight PWM duty-cycle
+register.
+The kernel
+.IR igfx
+driver (see
+.IR vga (8))
+maps the graphics MMIO and publishes it as the
+.B igfxmmio
+physical segment;
+.I light
+attaches that segment and pokes the register directly, so no kernel
+support beyond the existing driver is needed.
+.PP
+With no argument
+.I light
+prints the current brightness as a percentage.
+A bare
+.I percent
+(0 to 100) sets the brightness to that level; a value prefixed with
+.B +
+or
+.B -
+adjusts it relative to the current level.
+The brightness is clamped to a small minimum so the screen never goes
+fully dark; use the screen blanker
+.RI ( vga (8))
+to turn the backlight off.
+.PP
+By default the PCH backlight register
+.B 0xC8254
+is used, which is correct from Ironlake through Broadwell (for example
+the Thinkpad T440p, a Haswell machine).
+Other generations place the PWM elsewhere \- CPU side at
+.BR 0x48254 ,
+pre-Ironlake at
+.B 0x61254
+\- and can be selected with
+.BR -r .
+In every case the register holds the PWM period in bits 31:16 and the
+duty cycle in bits 15:0, and brightness is duty divided by period.
+.SH EXAMPLES
+Dim to half brightness:
+.IP
+.EX
+aux/light 50
+.EE
+.LP
+Brighten by ten percent:
+.IP
+.EX
+aux/light +10
+.EE
+.SH SOURCE
+.B /sys/src/cmd/aux/light.c
+.SH "SEE ALSO"
+.IR vga (8)
+.SH BUGS
+Only Intel integrated graphics driven by the
+.I igfx
+kernel driver are supported; on machines running the generic VESA
+framebuffer there is no register access and
+.I light
+does nothing useful.
+The correct PWM register and its polarity are not derived from the
+device or its EDID, so an unusual panel may need
+.B -r
+or may not respond at all.
+.PP
+The first Intel display controller found is used; there is no way to
+select among several.
