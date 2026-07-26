@@ -97,19 +97,25 @@ main(int argc, char **argv)
 		usage();
 	}ARGEND;
 
-	ctl = open("/dev/mousectl", OWRITE);
+	/*
+	 * Talk to the kernel mouse device directly via #m, not /dev, which a
+	 * window system (rio) may have mounted over: synaptic mode and the raw
+	 * packets are kernel-only, and the events must reach the kernel mouse
+	 * so every reader (including rio) sees them.
+	 */
+	ctl = open("#m/mousectl", OWRITE);
 	if(ctl < 0)
-		sysfatal("open /dev/mousectl: %r");
+		sysfatal("open #m/mousectl: %r");
 	if(write(ctl, "synaptic", 8) < 0)
 		sysfatal("enable synaptic mode: %r");
 
-	fd = open("/dev/touchpadraw", OREAD);
+	fd = open("#m/touchpadraw", OREAD);
 	if(fd < 0)
-		sysfatal("open /dev/touchpadraw: %r");
+		sysfatal("open #m/touchpadraw: %r");
 
-	mousefd = open("/dev/mousein", OWRITE);
+	mousefd = open("#m/mousein", OWRITE);
 	if(mousefd < 0)
-		sysfatal("open /dev/mousein: %r");
+		sysfatal("open #m/mousein: %r");
 
 	memset(&g, 0, sizeof g);
 	for(;;){

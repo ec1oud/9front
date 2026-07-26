@@ -14,13 +14,22 @@ gestures the kernel mouse driver does not provide.
 It writes
 .B synaptic
 to
-.B /dev/mousectl
+.B #m/mousectl
 to put the pad into absolute mode, then reads the raw packets from
-.B /dev/touchpadraw
+.B #m/touchpadraw
 (see
 .IR mouse (3)),
 decodes them, and drives the cursor by writing mouse events to
-.BR /dev/mousein .
+.BR #m/mousein .
+It uses the kernel
+.B #m
+device directly rather than
+.B /dev
+so that it still reaches the kernel mouse when a window system such as
+.IR rio (1)
+has mounted its own
+.B /dev/mouse
+files over it.
 While
 .I tpad
 holds
