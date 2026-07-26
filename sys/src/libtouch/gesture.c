@@ -180,6 +180,23 @@ gesture(Gesture *g, Touch *t, int fd)
 		g->moved = 1;			/* a real click is never a tap */
 	}
 
+	/*
+	 * On an easy clickpad, adding fingers to arm a menu also presses the
+	 * switch, so a physical click with two or more fingers is a menu, not
+	 * button 1: arm it now (2 fingers = right, 3 = middle), latched to the
+	 * primary like a tap-arm, and absorb the click.  A one-finger press
+	 * stays button 1 (handled in the cursor path below).
+	 */
+	if(press && t->n >= 2 && g->menub == 0){
+		g->menub = t->n >= 3 ? 2 : 4;
+		g->mode = Gmenu;
+		g->px = t->x[prim];
+		g->py = t->y[prim];
+		emitmouse(fd, 0, 0, g->menub);
+		g->lastb = b;
+		return;
+	}
+
 	switch(g->mode){
 	case Gpending:
 		/*
