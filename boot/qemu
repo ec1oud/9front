@@ -12,6 +12,7 @@ arch=386
 cpuwait=false
 net=true
 vga=false
+ramfb=false
 kitty=false
 kittyuart=false
 emu=false
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
 	-nonet)		net=false ;;
 	-smp)		smp=$2; shift ;;
 	-vga)		vga=true ;;
+	-ramfb)		ramfb=true ;;
 	-kitty)		kitty=true; kittyuart=false ;;
 	-kitty-uart)	kitty=true; kittyuart=true ;;
 	-emu)		emu=true ;;
@@ -42,7 +44,7 @@ while [ $# -gt 0 ]; do
 		fi
 		;;
 	*)
-		echo 'usage: boot/qemu [-386 | -amd64 | -arm64 | -riscv64] [-cpuwait] [-nonet] [-smp n] [-vga | -kitty | -kitty-uart] [-emu] [-x [n]]' >&2
+		echo 'usage: boot/qemu [-386 | -amd64 | -arm64 | -riscv64] [-cpuwait] [-nonet] [-smp n] [-vga | -ramfb | -kitty | -kitty-uart] [-emu] [-x [n]]' >&2
 		exit 1
 		;;
 	esac
@@ -56,6 +58,16 @@ fi
 if [ "$scale" != 0 ] && ! $kitty; then
 	echo 'boot/qemu: -x needs -kitty or -kitty-uart' >&2
 	exit 1
+fi
+if $ramfb; then
+	if $vga || $kitty; then
+		echo 'boot/qemu: -ramfb cannot be combined with -vga or -kitty' >&2
+		exit 1
+	fi
+	case $arch in
+	riscv64) ;;
+	*) echo 'boot/qemu: -ramfb is for riscv64 kernels' >&2; exit 1 ;;
+	esac
 fi
 
 case $arch in
@@ -114,7 +126,19 @@ if $vga; then
 	gfx=(-vga std)
 	append="$append monitor=vesa vgasize=1920x1080x32 mouseport=ps2intellimouse"
 fi
+if $ramfb; then
+	# Let QEMU choose its usual display backend; on a headless
+	# host that is VNC.  The USB pair feeds Plan 9's nusb HID.
+	gfx=()
+	append="$append mouseport=none"
+fi
 args=(-m "$mem" -smp "$smp" "${gfx[@]}" -monitor none -serial "$serial" -no-reboot)
+if $ramfb; then
+	args+=(-device ramfb
+		-device nec-usb-xhci,id=xhci
+		-device usb-kbd,bus=xhci.0
+		-device usb-tablet,bus=xhci.0)
+fi
 # Public test credentials; not for production.
 # authid=glenda authdom=front; dp9ik password='glen||glenda'.
 # No secstore or p9sk1 key.
@@ -230,6 +254,7 @@ if [ "$accel" = tcg ]; then
 else
 	echo "boot/qemu: hardware acceleration: $accel ($os/$host, guest $arch)" >&2
 fi
+echo "$qemu" "${args[@]}"
 if $kitty; then
 	trap 'printf "\033[<u\033[?2048l\033[?2004l\033[?1004l\033[?1016l\033[?1006l\033[?1003l\033[?7h\033[?25h\033[?1049l"' EXIT
 	"$qemu" "${args[@]}"

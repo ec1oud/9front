@@ -228,6 +228,8 @@ extern void* dpuk3fbkaddr(void);
  * IFX carrier board -- see that file's own header for how it differs
  * from screenpicoitx.c's dpuk3(). */
 extern void dpuk3com260(void);
+/* screenqemu.c */
+extern void* qemufbinit(int*, int*, int*, uvlong*);
 /* screen.c */
 extern void screeninit(void);
 

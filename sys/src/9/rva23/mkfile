@@ -90,6 +90,7 @@ OBJ=\
 	screenpicoitx.$O\
 	usbxhcicom260.$O\
 	screencom260.$O\
+	screenqemu.$O\
 	sdscsi.$O\
 	sdufs.$O\
 	$CONF.root.$O\

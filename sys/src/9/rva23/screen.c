@@ -1,7 +1,8 @@
 /*
- * screen.c -- generic memimage/devdraw framebuffer console, adapted
- * for the K3 Pico-ITX from riscv64-video-branch's own screen.c (BPI-F3
- * / K1, HDMI, firmware-inherited framebuffer).
+ * screen.c -- generic memimage/devdraw framebuffer console for the
+ * K3 Pico-ITX and QEMU virt ramfb.  The K3 path is adapted from
+ * riscv64-video-branch's own screen.c (BPI-F3 / K1, HDMI,
+ * firmware-inherited framebuffer).
  *
  * THAT reference version never programs the display hardware at all
  * -- it takes over whatever framebuffer u-boot left scanning out on
@@ -23,6 +24,8 @@
  * Also shared with the K3 CoM260 IFX carrier board (screencom260.c) --
  * this file is board-agnostic, it just hands off whichever board's
  * already-live DP1 framebuffer to the generic memimage/devdraw layer.
+ * QEMU virt uses screenqemu.c's ramfb buffer, which QEMU scans out
+ * directly, so flushmemscreen() is an ordinary CPU copy there.
  *
  * Removed from the reference version, since none of it applies here:
  * dpuprobe() (guessing what firmware left running -- we already know,
@@ -55,10 +58,7 @@ enum {
 
 Memimage *gscreen;
 
-static uchar *fbraw;		/* K3 Pico-ITX's own DP1 framebuffer, made
-				 * non-cacheable in place by
-				 * dpuk3fbaddr() (screenpicoitx.c) via
-				 * mmuuncache() -- not a second mapping */
+static uchar *fbraw;		/* board framebuffer: K3 DP1 or QEMU ramfb */
 static int fbstride;		/* its bytes per line */
 
 static Memimage *conscol;
@@ -79,12 +79,14 @@ enum
 {
 	CMaccelerated,
 	CMlinear,
+	CMres,
 };
 
 static Cmdtab mousectlmsg[] =
 {
 	CMaccelerated,		"accelerated",		0,
 	CMlinear,		"linear",		1,
+	CMres,			"res",			0,
 };
 
 void
@@ -99,6 +101,9 @@ mousectl(Cmdbuf *cb)
 		break;
 	case CMlinear:
 		mouseaccelerate(0);
+		break;
+	case CMres:
+		/* PS/2 resolution; USB HID pointers have none */
 		break;
 	}
 }
@@ -254,45 +259,38 @@ screeninit(void)
 	int width, height, depth, stride;
 	char *p;
 
-	/*
-	 * K3 Pico-ITX: the framebuffer is our own, programmed from
-	 * scratch by screenpicoitx.c's dpuk3dp() (real DP1 link training,
-	 * MSA, the works -- confirmed showing a clean, stable image on
-	 * real hardware) -- not inherited from firmware, unlike the
-	 * reference version this file is adapted from. dpuk3fbaddr()
-	 * reserves (idempotent: a second call just returns the same
-	 * physical address) and marks that range non-cacheable in place
-	 * via mmuuncache(), same mechanism the reference screeninit()
-	 * used on its own firmware-inherited framebuffer -- see its own
-	 * comment in screenpicoitx.c. devarch.c calls this AFTER
-	 * dpuk3dp() has already finished, so the DP1 pipeline is live by
-	 * the time we get here, and the mode is the fixed 1920x1080@60
-	 * this whole codebase uses throughout (no EDID/mode negotiation
-	 * ported -- see this file's own header).
-	 *
-	 * dpuk3fbaddr() reserves on first call, so it can't be used as the
-	 * "is there a framebuffer" test: on a board neither driver claimed
-	 * (qemu, bpi-f3) it would reserve 8MB and hand devdraw a screen
-	 * that nothing scans out.  dpuk3fbkaddr() is nil until a board
-	 * driver has made the reservation, which is the test we want.
-	 */
-	if(dpuk3fbkaddr() == nil){
-		print("screeninit: no DP1 framebuffer\n");
-		return;
-	}
-	fbaddr = dpuk3fbaddr();
-
-	width = 1920;
-	height = 1080;
-	depth = 32;
-	stride = width*depth/8;	/* 7680, matches dpuk3mode()'s own stride */
-
 	memimageinit();
 
-	fbraw = dpuk3fbkaddr();
-	if(fbraw == nil){
-		print("screeninit: dpuk3fbkaddr() returned nil\n");
-		return;
+	/*
+	 * QEMU virt: ramfb scans out a buffer in guest RAM.  Only QEMU
+	 * with -device ramfb has the fw_cfg file, so a plain QEMU boot
+	 * still gets no screen.
+	 */
+	fbraw = qemufbinit(&width, &height, &stride, &fbaddr);
+	if(fbraw != nil)
+		depth = 32;
+	else {
+		/*
+		 * K3 Pico-ITX: the DPU/DP1 pipeline is already live when
+		 * boardinit() gets here; dpuk3fbkaddr() is nil until a
+		 * board driver has reserved the buffer, which is the
+		 * "is there a framebuffer" test.  dpuk3fbaddr() reserves
+		 * on first call, so it cannot be used for that test.
+		 */
+		if(dpuk3fbkaddr() == nil){
+			print("screeninit: no framebuffer\n");
+			return;
+		}
+		fbaddr = dpuk3fbaddr();
+		width = 1920;
+		height = 1080;
+		depth = 32;
+		stride = width*depth/8;
+		fbraw = dpuk3fbkaddr();
+		if(fbraw == nil){
+			print("screeninit: dpuk3fbkaddr() returned nil\n");
+			return;
+		}
 	}
 	fbstride = stride;
 
@@ -346,10 +344,9 @@ flushmemscreen(Rectangle r)
 
 	/*
 	 * No 2D engine ported (v2d.c, reference-only) -- always the plain
-	 * CPU copy loop below. fbraw is non-cacheable (mmuuncache(), see
-	 * dpuk3fbaddr() in screenpicoitx.c), so each memmove here lands
-	 * in real DRAM immediately, visible to the DPU's own DMA without
-	 * any separate cache-flush step.
+	 * CPU copy loop below.  The K3 buffer is mapped non-cacheable, so
+	 * the DPU sees each copy immediately; QEMU ramfb reads the cached
+	 * buffer directly.
 	 */
 	d = fbraw + (r.min.y - gscreen->r.min.y)*fbstride
 	    + (r.min.x - gscreen->r.min.x)*gscreen->depth/8;

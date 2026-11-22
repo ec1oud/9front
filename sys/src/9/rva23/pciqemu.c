@@ -139,6 +139,38 @@ pciintrdisable(int tbdf, void (*f)(Ureg*, void*), void *a)
 	}
 }
 
+/*
+ * QEMU's PCIe host puts the INTx routing in the DTB interrupt-map,
+ * not in the device's Interrupt Line register.  The map for bus 0 is
+ * the usual rotating one: device 0 pins A-D use IRQ 32-35, device 1
+ * starts at 33, and so on.  Drivers read Pcidev.intl, so fill it in.
+ */
+static void
+pciintl(void)
+{
+	Pcidev *p;
+	int dev, pin;
+	static uchar map[4][4] = {
+		{IRQpci1, IRQpci2, IRQpci3, IRQpci4},
+		{IRQpci2, IRQpci3, IRQpci4, IRQpci1},
+		{IRQpci3, IRQpci4, IRQpci1, IRQpci2},
+		{IRQpci4, IRQpci1, IRQpci2, IRQpci3},
+	};
+
+	for(p = nil; (p = pcimatch(p, 0, 0)) != nil; ){
+		if(BUSBNO(p->tbdf) != 0)
+			continue;
+		if(p->intl != 0 && p->intl != 0xff)
+			continue;
+		pin = pcicfgr8(p, PciINTP);
+		if(pin < 1 || pin > 4)
+			continue;
+		dev = BUSDNO(p->tbdf) & 3;
+		p->intl = map[dev][pin-1];
+		pcicfgw8(p, PciINTL, p->intl);
+	}
+}
+
 static void
 pcicfginit(void)
 {
@@ -156,6 +188,9 @@ pcicfginit(void)
 	pciscan(0, &pciroot, nil);
 	if(pciroot == nil)
 		return;
+
+	if(dtbsocmatch("riscv-virtio"))
+		pciintl();
 
 	pciintrinit();
 
